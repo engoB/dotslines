@@ -13,12 +13,12 @@ const isIOS = (): boolean =>
   /iphone|ipad|ipod/i.test(navigator.userAgent) ||
   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
-export function initPWA(installBtn: HTMLButtonElement | null, toast: (msg: string) => void): void {
+export function initPWA(installBtns: HTMLButtonElement[], toast: (msg: string) => void): void {
+  const showInstall = (show: boolean) => installBtns.forEach((b) => b.classList.toggle('hidden-el', !show));
   const netBadge = document.getElementById('net-status');
   const updateNetUI = () => {
-    if (!netBadge) return;
-    netBadge.textContent = navigator.onLine ? '🟢 En ligne' : '📴 Hors-ligne';
-    netBadge.classList.toggle('offline', !navigator.onLine);
+    // Only worth showing when it matters: playing offline is fully supported.
+    netBadge?.classList.toggle('hidden-el', navigator.onLine);
   };
   window.addEventListener('online', updateNetUI);
   window.addEventListener('offline', updateNetUI);
@@ -38,24 +38,25 @@ export function initPWA(installBtn: HTMLButtonElement | null, toast: (msg: strin
   window.addEventListener('beforeinstallprompt', (e: Event) => {
     e.preventDefault();
     deferredPrompt = e as BeforeInstallPromptEvent;
-    installBtn?.classList.remove('hidden-el');
+    showInstall(true);
   });
   window.addEventListener('appinstalled', () => {
-    installBtn?.classList.add('hidden-el');
+    showInstall(false);
     deferredPrompt = null;
   });
 
   // iOS Safari has no install prompt: explain the manual way instead.
-  if (isIOS()) installBtn?.classList.remove('hidden-el');
+  if (isIOS()) showInstall(true);
 
-  installBtn?.addEventListener('click', async () => {
+  const install = async () => {
     if (!deferredPrompt) {
       if (isIOS()) toast('Sur iPhone : bouton Partager ⬆️ puis « Sur l’écran d’accueil ».');
       return;
     }
     await deferredPrompt.prompt();
     const { outcome } = await deferredPrompt.userChoice;
-    if (outcome === 'accepted') installBtn.classList.add('hidden-el');
+    if (outcome === 'accepted') showInstall(false);
     deferredPrompt = null;
-  });
+  };
+  installBtns.forEach((b) => b.addEventListener('click', install));
 }

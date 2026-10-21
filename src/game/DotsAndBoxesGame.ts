@@ -10,7 +10,8 @@ export type MoveSource = 'local' | 'ai' | 'remote';
 export interface GameHooks {
   /** Scores / current player changed. */
   onUpdate: () => void;
-  onMove: (edge: number, source: MoveSource, seq: number) => void;
+  /** `captured` = number of boxes the move closed (the same player plays again). */
+  onMove: (edge: number, source: MoveSource, seq: number, captured: number) => void;
   onGameOver: () => void;
 }
 
@@ -20,7 +21,7 @@ const AI_CHAIN_DELAY_MS = 230;
 const EDGE_ANIM_MS = 140;
 const BOX_ANIM_MS = 420;
 
-export const PLAYER_COLORS: Record<Player, string> = { 1: '#2b59c3', 2: '#d1493f' };
+export const PLAYER_COLORS: Record<Player, string> = { 1: '#2a64cf', 2: '#d23c66' };
 
 export class DotsAndBoxesGame {
   private readonly canvas: HTMLCanvasElement;
@@ -31,6 +32,8 @@ export class DotsAndBoxesGame {
   public config: MatchConfig = { size: 4, mode: 'ai-expert', starter: 1 };
   public state = new BoardState(4);
   public aiThinking = false;
+  /** Marker under the last line played. */
+  public showLastMove = true;
   /** Bumped on every new match so late AI replies / timers from the old one are ignored. */
   private matchId = 0;
 
@@ -69,6 +72,11 @@ export class DotsAndBoxesGame {
 
   public get isGameOver(): boolean {
     return this.state.isOver;
+  }
+
+  /** Boxes still to be won. */
+  public get boxesLeft(): number {
+    return this.state.geom.boxCount - this.state.scores[1] - this.state.scores[2];
   }
 
   public get hasMatchInProgress(): boolean {
@@ -131,7 +139,7 @@ export class DotsAndBoxesGame {
     this.sfx.playPencilStroke();
     if (captured.length > 0) this.sfx.playBoxCaptured(captured.length);
 
-    this.hooks.onMove(edge, source, seq);
+    this.hooks.onMove(edge, source, seq, captured.length);
     this.hooks.onUpdate();
     this.requestRender();
 
@@ -336,7 +344,7 @@ export class DotsAndBoxesGame {
       );
     }
 
-    if (this.lastEdge >= 0 && edgeOwner[this.lastEdge] && !this.state.isOver) {
+    if (this.showLastMove && this.lastEdge >= 0 && edgeOwner[this.lastEdge] && !this.state.isOver) {
       const { x1, y1, x2, y2 } = this.edgeCoords(this.lastEdge);
       SketchRenderer.drawHighlight(ctx, x1, y1, x2, y2, PLAYER_COLORS[edgeOwner[this.lastEdge] as Player], 14 * scale);
     }
@@ -381,7 +389,7 @@ export class DotsAndBoxesGame {
 
   private spawnPaperConfetti(): void {
     if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
-    const palette = ['#2b59c3', '#d1493f', '#e6a100', '#3b8ea5', '#2c2623'];
+    const palette = ['#2a64cf', '#d23c66', '#deb173', '#d6317f', '#4a2f1f'];
     for (let i = 0; i < 60; i++) {
       this.confetti.push({
         x: this.cssWidth / 2,

@@ -1,7 +1,7 @@
 {
   "name": "dotslines-pwa",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,6 +12,7 @@
     "typecheck": "tsc"
   },
   "dependencies": {
+    "@fontsource/baloo-2": "^5.3.0",
     "@fontsource/caveat": "^5.2.0",
     "@fontsource/nunito": "^5.2.0",
     "peerjs": "^1.5.5",

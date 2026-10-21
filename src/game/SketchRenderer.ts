@@ -75,7 +75,7 @@ export class SketchRenderer {
 
   static drawSketchDot(ctx: CanvasRenderingContext2D, x: number, y: number, radius: number, seed: number): void {
     ctx.save();
-    ctx.fillStyle = '#2c2623';
+    ctx.fillStyle = '#3a2a20';
     for (let p = 0; p < 2; p++) {
       ctx.beginPath();
       const ox = (this.seededNoise(seed + p * 11) - 0.5) * 1.4;

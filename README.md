@@ -7,6 +7,21 @@ sur le même écran, ou **sur deux téléphones** en P2P (WebRTC, sans serveur d
 👉 **Jouer :** https://engob.github.io/dotslines/
 👉 **Version 1 fichier :** [`standalone-bundle.html`](./standalone-bundle.html) (s'ouvre directement depuis le disque)
 
+## Interface
+
+Le plateau reste un **carnet de croquis** (papier quadrillé, traits au crayon), habillé d'une interface
+inspirée d'[Iro-Koku](https://github.com/engoB/IroKoku) (couleurs et polices uniquement, sans ses illustrations) :
+cartes parchemin à liseré doré, bouton gemme magenta, onglets « pilule », fanions de score bleu/rouge,
+gemme de tour au-dessus du plateau, feuilles coulissantes. Polices : Baloo 2, Nunito et Caveat (auto-hébergées).
+
+- **Accueil** : plateau de démonstration qui se joue tout seul, choix du mode (Solo · À deux · En ligne),
+  difficulté et taille de grille, bouton *Jouer*, barre Règles · Stats · Réglages.
+- **Partie** : fanions de score, carte « Toi vs adversaire » avec le tour en cours, bandeau de messages
+  (« +2 carrés ! Tu rejoues. »), pause (reprendre, recommencer, accueil).
+- **Réglages** : sons, vibrations, marquage du dernier trait, qui commence (à tour de rôle / moi / l'adversaire),
+  installation, remise à zéro des statistiques.
+- **Statistiques** : victoires / défaites / nuls par niveau d'IA, en ligne et à deux.
+
 ## Fonctionnalités
 
 - Grilles 3×3, 4×4, 5×5.
@@ -17,7 +32,7 @@ sur le même écran, ou **sur deux téléphones** en P2P (WebRTC, sans serveur d
   Web Worker pour ne jamais figer l'animation.
 - **2 joueurs (1 écran)** et **2 téléphones (P2P)** : code salon à 4 caractères, QR code généré localement,
   lien d'invitation `?room=XXXX`, revanche, reconnexion au même salon, salon limité à 2 téléphones.
-- Le premier joueur alterne à chaque manche ; score des manches affiché.
+- Le premier joueur alterne à chaque manche (réglable) ; score des manches affiché.
 - PWA installable, polices auto-hébergées, 100 % hors-ligne (sauf la mise en relation P2P qui demande Internet).
 - Réglages mémorisés (mode, taille, son).
 
@@ -67,7 +82,11 @@ src/
 │   ├── SoundEffects.ts     # sons Web Audio
 │   ├── P2PManager.ts       # WebRTC via PeerJS
 │   └── types.ts            # types + validation des messages P2P
-├── main.ts                 # interface (menus, HUD, P2P)
+├── ui/
+│   ├── DemoBoard.ts        # plateau de démo animé de l'accueil
+│   ├── icons.ts            # icônes SVG inline
+│   └── prefs.ts            # réglages et statistiques (localStorage)
+├── main.ts                 # interface (accueil, partie, feuilles, P2P)
 ├── pwa.ts                  # service worker, installation, statut réseau
 └── style.css
 tests/                      # Vitest
