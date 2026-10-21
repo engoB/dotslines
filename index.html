@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#f9f6f0" />
+  <meta name="description" content="Le jeu des petits carrés (Dots and Boxes) au crayon : contre l'IA, à deux sur un écran ou sur deux téléphones, même hors-ligne." />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Petits Carrés" />
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+  <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+  <title>Petits Carrés — Carnet de Croquis</title>
+</head>
+<body>
+  <div class="app-container">
+    <header class="top-bar">
+      <div class="brand-group">
+        <h1 class="brand-title">Petits Carrés ✏️</h1>
+        <span id="net-status" class="net-badge" role="status">🟢 En ligne</span>
+      </div>
+      <div class="top-actions">
+        <button id="btn-install" class="btn-sketch hidden-el" type="button" title="Installer l'application (jouable hors-ligne)">📲 Installer</button>
+        <button id="btn-sound" class="btn-sketch" type="button" title="Activer / couper le son" aria-label="Son activé">🔊</button>
+        <button id="btn-menu" class="btn-sketch" type="button" title="Menu principal">⚙️ Menu</button>
+      </div>
+    </header>
+
+    <section class="scoreboard" aria-live="polite">
+      <div id="card-p1" class="player-card p1 active">
+        <div id="badge-p1" class="color-badge">J1</div>
+        <div class="player-info">
+          <span id="name-p1" class="player-name">Toi</span>
+          <span id="score-p1" class="player-score">0</span>
+        </div>
+      </div>
+      <div id="turn-badge" class="turn-indicator">À ton tour !</div>
+      <div id="card-p2" class="player-card p2">
+        <div id="badge-p2" class="color-badge">IA</div>
+        <div class="player-info">
+          <span id="name-p2" class="player-name">IA Expert</span>
+          <span id="score-p2" class="player-score">0</span>
+        </div>
+      </div>
+    </section>
+
+    <main class="canvas-wrapper">
+      <canvas id="game-canvas" aria-label="Plateau de jeu : touche entre deux points pour tracer un trait"></canvas>
+
+      <div id="screen-gameover" class="overlay-screen overlay-light hidden">
+        <h2 id="winner-title" class="modal-title handwritten">Victoire !</h2>
+        <p id="winner-subtitle" class="modal-subtitle">Score final : 9 à 7</p>
+        <p id="match-tally" class="tally"></p>
+        <div class="row-buttons">
+          <button id="btn-replay" class="btn-sketch btn-primary" type="button">🔄 Rejouer</button>
+          <button id="btn-change-mode" class="btn-sketch" type="button">⚙️ Menu</button>
+        </div>
+      </div>
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <div id="screen-start" class="overlay-screen menu-screen" role="dialog" aria-label="Menu principal">
+      <h2 class="modal-title handwritten">Petits Carrés ✏️</h2>
+      <p class="modal-subtitle">Relie les points au crayon. Ferme un carré pour marquer un point et rejouer aussitôt !</p>
+
+      <div class="config-group">
+        <span class="config-label">Mode de jeu</span>
+        <div class="segmented-control" id="mode-select">
+          <button class="seg-btn" type="button" data-mode="ai-easy">🤖 IA Facile</button>
+          <button class="seg-btn" type="button" data-mode="ai-medium">🧠 IA Malin</button>
+          <button class="seg-btn active" type="button" data-mode="ai-expert">👑 IA Expert</button>
+        </div>
+        <div class="segmented-control cols-2" id="multi-select">
+          <button class="seg-btn" type="button" data-mode="pvp">👥 2 Joueurs (1 écran)</button>
+          <button class="seg-btn" type="button" data-mode="p2p">📱 2 Téléphones</button>
+        </div>
+      </div>
+
+      <div class="config-group" id="size-group">
+        <span class="config-label">Taille de la grille</span>
+        <div class="segmented-control" id="size-select">
+          <button class="seg-btn" type="button" data-size="3">3 × 3 (Rapide)</button>
+          <button class="seg-btn active" type="button" data-size="4">4 × 4 (Classique)</button>
+          <button class="seg-btn" type="button" data-size="5">5 × 5 (Grand)</button>
+        </div>
+      </div>
+
+      <div id="p2p-panel" class="p2p-box hidden-el">
+        <div id="p2p-tabs" class="segmented-control cols-2">
+          <button id="btn-host-tab" class="seg-btn active" type="button">Créer un salon</button>
+          <button id="btn-join-tab" class="seg-btn" type="button">Rejoindre</button>
+        </div>
+        <div id="host-view" class="p2p-view">
+          <span class="status-pill" id="host-status">Création du salon…</span>
+          <div class="room-code-display" id="room-code-text">····</div>
+          <img id="room-qr" class="qr-img hidden-el" alt="QR code d'invitation au salon" />
+          <button id="btn-share-link" class="btn-sketch btn-small" type="button" disabled>🔗 Partager le lien</button>
+          <span class="hint">L'autre téléphone scanne le QR code ou saisit le code dans « Rejoindre ».</span>
+        </div>
+        <div id="join-view" class="p2p-view hidden-el">
+          <label class="status-pill" id="join-status" for="input-room-code">Entre le code à 4 caractères du Téléphone 1 :</label>
+          <div class="join-input-row">
+            <input id="input-room-code" class="code-input" type="text" maxlength="4" placeholder="K7M9"
+              autocomplete="off" autocapitalize="characters" spellcheck="false" enterkeyhint="go" />
+            <button id="btn-connect-peer" class="btn-sketch btn-primary btn-compact" type="button">Rejoindre</button>
+          </div>
+        </div>
+        <div id="connected-view" class="p2p-view hidden-el">
+          <span class="status-pill ok" id="connected-status">Connecté ✔</span>
+          <div class="row-buttons">
+            <button id="btn-p2p-newround" class="btn-sketch btn-small" type="button">🔄 Nouvelle manche</button>
+            <button id="btn-p2p-leave" class="btn-sketch btn-small" type="button">🚪 Quitter le salon</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="row-buttons">
+        <button id="btn-resume" class="btn-sketch hidden-el" type="button">▶️ Reprendre</button>
+        <button id="btn-start-game" class="btn-sketch btn-primary" type="button">✏️ Commencer la partie</button>
+      </div>
+    </div>
+  </div>
+  <noscript>Ce jeu nécessite JavaScript.</noscript>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
