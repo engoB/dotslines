@@ -8,10 +8,13 @@ import '@fontsource/caveat/latin-700.css';
 import './style.css';
 import { initPWA } from './pwa';
 import type { AILevel } from './game/ai';
+import { AIClient } from './game/AIClient';
 import { DotsAndBoxesGame, type MoveSource } from './game/DotsAndBoxesGame';
 import { P2PManager } from './game/P2PManager';
-import { ROUND_NAMES, Tournament, type Contestant } from './game/Tournament';
+import { ROUND_NAMES } from './game/Tournament';
 import { isAIMode, type GameMode, type MatchConfig, type P2PMessage, type Player } from './game/types';
+import { TournamentClient } from './online/TournamentClient';
+import { cleanName, TournamentHost } from './online/TournamentHost';
 import { DemoBoard } from './ui/DemoBoard';
 import { hydrateIcons, ICONS } from './ui/icons';
 import {
@@ -71,8 +74,10 @@ const views: Record<View, HTMLElement> = { home: $('view-home'), game: $('view-g
 const scrim = $('scrim');
 const demo = new DemoBoard($<HTMLCanvasElement>('demo-canvas'));
 let openPanel: HTMLElement | null = null;
+let currentView: View = 'home';
 
 function showView(view: View): void {
+  currentView = view;
   for (const [name, el] of Object.entries(views)) el.classList.toggle('hidden', name !== view);
   if (view === 'home') {
     setFullscreen(false);
@@ -86,27 +91,30 @@ function showView(view: View): void {
 
 /** Opens a bottom sheet or the game-over modal (one at a time). */
 function openOverlay(id: string): void {
-  closeOverlay();
+  closeOverlay(true);
   openPanel = $(id);
   openPanel.hidden = false;
   scrim.hidden = false;
   openPanel.querySelector<HTMLElement>('[data-close], .btn')?.focus({ preventScroll: true });
 }
 
-function closeOverlay(): void {
+/** `switching` = another overlay replaces this one (no "leave the room" side effect). */
+function closeOverlay(switching = false): void {
   if (!openPanel) return;
   const closing = openPanel;
   openPanel = null;
   closing.hidden = true;
   scrim.hidden = true;
-  // Leaving the online sheet without a partner frees the room.
-  if (closing.id === 'sheet-online' && !p2p.isConnected) p2p.cleanup();
+  if (switching || closing.id !== 'sheet-online') return;
+  // Closing the online sheet before a game started leaves the room.
+  if (onlineKind === 'tournament' && !tClient.started) leaveTournament();
+  else if (!p2p.isConnected) p2p.cleanup();
 }
 
 scrim.addEventListener('click', () => {
   if (openPanel?.id !== 'modal-gameover') closeOverlay();
 });
-document.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', closeOverlay));
+document.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', () => closeOverlay()));
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && openPanel && openPanel.id !== 'modal-gameover') closeOverlay();
 });
@@ -125,30 +133,42 @@ const game = new DotsAndBoxesGame($<HTMLCanvasElement>('game-canvas'), {
 });
 game.sfx.enabled = prefs.sound;
 
-/** Names of the two sides of the current tournament match. */
-let matchNames: Record<Player, string> = { 1: 'Joueur 1', 2: 'Joueur 2' };
-
 function currentMode(): GameMode {
   if (prefs.kind === 'solo') return `ai-${prefs.level}` as GameMode;
   if (prefs.kind === 'tournament') return 'tournament';
   return prefs.kind === 'local' ? 'pvp' : 'p2p';
 }
 
+/** Tournament match shown on the board (-1: none). */
+let shownMatch = -1;
+
 function playerNames(): Record<Player, string> {
   const { mode, localPlayer } = game.config;
   if (mode === 'p2p') return localPlayer === 1 ? { 1: 'Toi', 2: 'Téléphone 2' } : { 1: 'Téléphone 1', 2: 'Toi' };
   if (mode === 'pvp') return { 1: 'Joueur 1', 2: 'Joueur 2' };
-  if (mode === 'tournament') return matchNames;
+  if (mode === 'tournament') {
+    const m = tClient.matches[shownMatch];
+    return { 1: tClient.name(m?.a ?? null), 2: tClient.name(m?.b ?? null) };
+  }
   return { 1: 'Toi', 2: `IA ${LEVEL_NAMES[mode.slice(3) as AILevelPref]}` };
 }
 
-const isAI = (p: Player) => !!game.config.ai?.[p];
+/** Is side p played by the computer (here or, in a tournament, on the host)? */
+function isAI(p: Player): boolean {
+  if (game.config.mode === 'tournament') {
+    const m = tClient.matches[shownMatch];
+    return tClient.isAI(p === 1 ? m?.a ?? null : m?.b ?? null);
+  }
+  return !!game.config.ai?.[p];
+}
 
 /** "You" wording only when a single human plays on this device against someone else. */
 const speaksToYou = (p: Player) => {
   const { mode, localPlayer } = game.config;
-  return mode === 'p2p' ? p === localPlayer : isAIMode(mode) && p === 1;
+  return mode === 'p2p' || mode === 'tournament' ? p === localPlayer : isAIMode(mode) && p === 1;
 };
+
+const remoteMode = () => game.config.mode === 'p2p' || game.config.mode === 'tournament';
 
 function turnMessage(): string {
   const p = game.state.currentPlayer;
@@ -156,7 +176,7 @@ function turnMessage(): string {
   if (speaksToYou(p)) return 'À toi : relie deux points voisins.';
   if (isAI(p)) return `${name} réfléchit…`;
   if (game.config.mode === 'p2p') return "En attente du coup de l'adversaire…";
-  return `Au tour de ${name}.`;
+  return game.config.mode === 'tournament' ? `${name} joue…` : `Au tour de ${name}.`;
 }
 
 const messageBar = $('message-bar');
@@ -194,7 +214,7 @@ function updateHUD(): void {
     let status = '';
     if (active) {
       if (isAI(p)) status = 'réfléchit';
-      else if (config.mode === 'p2p' && p !== config.localPlayer) status = 'joue…';
+      else if (remoteMode() && p !== config.localPlayer) status = 'joue…';
       else status = speaksToYou(p) ? 'À toi !' : 'À toi de jouer';
     }
     $(`status-p${p}`).textContent = status;
@@ -204,7 +224,8 @@ function updateHUD(): void {
 }
 
 function handleMove(edge: number, source: MoveSource, seq: number, captured: number): void {
-  if (game.config.mode === 'p2p' && source === 'local') p2p.send({ type: 'MOVE', edge, seq });
+  if (source === 'local' && game.config.mode === 'p2p') p2p.send({ type: 'MOVE', edge, seq });
+  if (source === 'local' && game.config.mode === 'tournament') sendTournamentMove(edge, seq);
   if (game.isGameOver) return setMessage('Partie terminée !', true);
   if (captured === 0) return setMessage(turnMessage());
   const p = game.state.currentPlayer;
@@ -279,7 +300,7 @@ function pickStarter(key: string, pref: StarterPref = prefs.starter): Player {
 
 function beginMatch(intro?: string): void {
   shownScores = { 1: 0, 2: 0 };
-  closeOverlay();
+  closeOverlay(true);
   if (touchDevice) setFullscreen(true);
   showView('game');
   setMessage(intro ?? turnMessage(), true);
@@ -294,172 +315,10 @@ function startLocalMatch(mode: GameMode = currentMode(), size: number = prefs.si
   beginMatch();
 }
 
-// ---- tournament ---------------------------------------------------------------
+// ---- online: shared ---------------------------------------------------------------
 
-let tournament: Tournament | null = null;
-let tournamentSize = 4;
-const AI_CYCLE: (AILevel | null)[] = [null, 'easy', 'medium', 'expert'];
-const typeLabel = (ai: AILevel | null) => (ai ? `IA ${LEVEL_NAMES[ai]}` : 'Humain');
-
-function renderLineup(contestants: Contestant[]): void {
-  const box = $('lineup');
-  box.innerHTML = '';
-  contestants.forEach((c, i) => {
-    if (i % 2 === 0) {
-      const sep = document.createElement('p');
-      sep.className = 'lineup-sep';
-      sep.textContent = i === 0 ? 'Demi-finale 1' : 'Demi-finale 2';
-      box.append(sep);
-    }
-    const row = document.createElement('div');
-    row.className = 'lineup-row';
-    row.innerHTML = `<span class="num">${i + 1}</span>
-      <input type="text" maxlength="14" autocomplete="off" spellcheck="false" aria-label="Nom du joueur ${i + 1}" />
-      <button type="button" class="type-btn"></button>`;
-    const input = row.querySelector('input')!;
-    const typeBtn = row.querySelector('button')!;
-    input.value = c.name;
-    const paint = (ai: AILevel | null) => {
-      typeBtn.textContent = typeLabel(ai);
-      typeBtn.classList.toggle('ai', !!ai);
-      typeBtn.dataset.ai = ai ?? '';
-    };
-    paint(c.ai);
-    typeBtn.addEventListener('click', () => {
-      const prev = (typeBtn.dataset.ai || null) as AILevel | null;
-      const next = AI_CYCLE[(AI_CYCLE.indexOf(prev) + 1) % AI_CYCLE.length];
-      paint(next);
-      // Keep auto-generated names in sync with the type.
-      const auto = /^(IA( \S+)?|Joueur \d)$/.test(input.value.trim()) || !input.value.trim();
-      if (auto) input.value = next ? `IA ${LEVEL_NAMES[next]}` : `Joueur ${i + 1}`;
-    });
-    box.append(row);
-  });
-}
-
-function readLineup(): Contestant[] {
-  return [...$('lineup').querySelectorAll<HTMLElement>('.lineup-row')].map((row, i) => {
-    const name = row.querySelector('input')!.value.trim().slice(0, 14);
-    const ai = (row.querySelector<HTMLButtonElement>('.type-btn')!.dataset.ai || null) as AILevel | null;
-    return { name: name || (ai ? `IA ${LEVEL_NAMES[ai]}` : `Joueur ${i + 1}`), ai };
-  });
-}
-
-function lineupSummary(list: Contestant[]): string {
-  const ais = list.filter((c) => c.ai).length;
-  const humans = 4 - ais;
-  if (!ais) return '4 humains';
-  if (!humans) return '4 IA (spectateur)';
-  return `${plural(humans, 'humain')} · ${ais} IA`;
-}
-
-function openLineup(): void {
-  renderLineup(prefs.contestants);
-  openOverlay('sheet-tournament');
-}
-
-$('btn-shuffle').addEventListener('click', () => {
-  const list = readLineup();
-  for (let i = list.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [list[i], list[j]] = [list[j], list[i]];
-  }
-  renderLineup(list);
-});
-
-$('btn-start-tournament').addEventListener('click', () => {
-  const list = readLineup();
-  setPrefs({ contestants: list });
-  tournament = new Tournament(list);
-  tournamentSize = prefs.size;
-  lastStart = null;
-  closeOverlay();
-  showView('bracket');
-});
-
-function renderBracket(): void {
-  if (!tournament) return;
-  const t = tournament;
-  $('bracket-size').textContent = sizeLabel(tournamentSize);
-  const current = t.currentIndex;
-  $('bracket-list').innerHTML = t.matches
-    .map((m, i) => {
-      const side = (idx: number | null, k: 0 | 1) => {
-        if (idx === null) return `<div class="match-row tbd"><span class="who">Vainqueur demi-finale ${k + 1}</span></div>`;
-        const c = t.players[idx];
-        const state = m.winner === null ? '' : m.winner === idx ? 'won' : 'lost';
-        const pts = m.score && m.winner !== null ? `<span class="pts">${m.score[k]}</span>` : '';
-        const tag = c.ai ? `<span class="tag">${LEVEL_NAMES[c.ai]}</span>` : '';
-        return `<div class="match-row ${state}"><span class="who">${escapeHTML(c.name)}</span>${tag}${pts}</div>`;
-      };
-      const note = m.replays && m.winner === null ? `<p class="match-note">Égalité : match à rejouer (${m.score?.join(' – ')})</p>` : '';
-      const cls = `match-card${i === 2 ? ' final' : ''}${i === current ? ' current' : ''}`;
-      return `<div class="${cls}"><span class="match-tag">${ROUND_NAMES[i]}</span>${side(m.a, 0)}${side(m.b, 1)}${note}</div>`;
-    })
-    .join('');
-
-  const champion = t.champion;
-  $('bracket-champion').classList.toggle('hidden-el', !champion);
-  if (champion) $('bracket-champion').innerHTML = `🏆 <span>${escapeHTML(champion.name)}</span> remporte le tournoi !`;
-  const m = t.current;
-  if (m && m.a !== null && m.b !== null) {
-    $('next-title').textContent = m.replays ? 'Rejouer le match' : 'Jouer le match';
-    $('next-sub').textContent = `${ROUND_NAMES[current]} · ${t.players[m.a].name} contre ${t.players[m.b].name}`;
-  } else {
-    $('next-title').textContent = 'Nouveau tournoi';
-    $('next-sub').textContent = 'Changer les joueurs ou rejouer';
-  }
-}
-
-function playTournamentMatch(): void {
-  const t = tournament;
-  const m = t?.current;
-  if (!t || !m || m.a === null || m.b === null) return openLineup();
-  const a = t.players[m.a];
-  const b = t.players[m.b];
-  matchNames = { 1: a.name, 2: b.name };
-  const ai: MatchConfig['ai'] = {};
-  if (a.ai) ai[1] = a.ai;
-  if (b.ai) ai[2] = b.ai;
-  game.start({
-    size: tournamentSize,
-    mode: 'tournament',
-    starter: pickStarter(`t:${t.currentIndex}`),
-    ai,
-    labels: { 1: initials(a.name), 2: initials(b.name) }
-  });
-  beginMatch(`${ROUND_NAMES[t.currentIndex]} : ${a.name} contre ${b.name}`);
-}
-
-function showTournamentResult(): void {
-  const t = tournament;
-  if (!t) return;
-  const round = ROUND_NAMES[t.currentIndex];
-  const { 1: s1, 2: s2 } = game.state.scores;
-  const result = t.record(s1, s2);
-  const winnerName = s1 > s2 ? matchNames[1] : matchNames[2];
-
-  let title: string;
-  if (result === 'draw') title = 'Égalité ! On rejoue 🤝';
-  else if (t.isOver) title = `🏆 ${winnerName} remporte le tournoi !`;
-  else title = `${winnerName} passe en finale !`;
-  if (result === 'win' && (t.isOver || !t.players.find((c) => c.name === winnerName)?.ai)) game.sfx.playVictory();
-
-  $('winner-title').textContent = title;
-  $('winner-round').textContent = round;
-  $('winner-round').classList.remove('hidden-el');
-  fillFinalScore();
-  $('match-tally').textContent = '';
-  $('btn-gameover-home').textContent = 'Tableau';
-  $('btn-replay').textContent = result === 'draw' ? 'Rejouer le match' : t.isOver ? 'Voir le tableau' : 'Match suivant';
-  openOverlay('modal-gameover');
-}
-
-$('btn-next-match').addEventListener('click', playTournamentMatch);
-$('btn-bracket-home').addEventListener('click', () => showView('home'));
-$('btn-edit-lineup').addEventListener('click', openLineup);
-
-// ---- P2P ----------------------------------------------------------------------
+/** What the current room is for. */
+let onlineKind: 'duel' | 'tournament' = 'duel';
 
 const hostStatus = $('host-status');
 const joinStatus = $('join-status');
@@ -500,23 +359,168 @@ const p2p = new P2PManager({
       qrImg.classList.add('hidden-el');
     }
   },
-  onConnected: (role) => {
+  onConnected: (role, peer) => {
+    if (location.search.includes('room=')) history.replaceState(null, '', location.pathname);
+    if (role === 'guest') return; // wait for the host's WELCOME
+    p2p.send({ type: 'WELCOME', kind: onlineKind }, peer);
+    if (onlineKind === 'tournament') {
+      if (tHost?.addGuest(peer) === null) p2p.send({ type: 'FULL' }, peer);
+      return;
+    }
     resetTallyIfNeeded(`p2p:${p2p.roomCode}:${Date.now()}`);
     lastStart = null;
-    if (location.search.includes('room=')) history.replaceState(null, '', location.pathname);
-    if (role === 'host') startP2PRound();
-    else toast('Connecté ! La partie va commencer…');
+    startP2PRound();
   },
-  onMessage: handleP2PMessage,
-  onDisconnected: (reason) => {
+  onMessage: (msg, peer) => {
+    if (p2p.role === 'host' && onlineKind === 'tournament') return handleHostTournamentMessage(msg, peer);
+    if (msg.type === 'WELCOME') return handleWelcome(msg.kind);
+    if (onlineKind === 'tournament') return handleTournamentMessage(msg);
+    handleP2PMessage(msg);
+  },
+  onDisconnected: (reason, peer) => {
+    if (onlineKind === 'tournament') {
+      if (p2p.role === 'host') {
+        const seat = tHost?.seatOfPeer(peer) ?? -1;
+        if (seat >= 0 && !tHost?.started) toast(`${tHost!.seats[seat].name} a quitté le salon.`);
+        tHost?.removeGuest(peer);
+        return;
+      }
+      toast(reason, 4500);
+      resetTournamentState();
+      prefs.kind = 'tournament';
+      closeOverlay(true);
+      showView('home');
+      return;
+    }
     toast(reason, 4500);
     if (game.config.mode !== 'p2p') return;
+    closeOverlay(true);
     // Back to the online sheet: the host keeps its room open with the same code.
     prefs.kind = 'online';
     showView('home');
     openOnline(p2p.role === 'host' ? 'host' : 'join');
   }
 });
+
+function startHosting(): void {
+  $('host-view').classList.remove('failed');
+  codeText.textContent = '····';
+  qrImg.classList.add('hidden-el');
+  shareBtn.disabled = true;
+  if (!navigator.onLine) {
+    setStatus(hostStatus, 'Le jeu en ligne a besoin d’Internet pour mettre les téléphones en relation.', 'error');
+    return;
+  }
+  if (onlineKind === 'tournament') {
+    resetTournamentState();
+    void p2p.host(3, 'En attente des joueurs…');
+    tHost = new TournamentHost(prefs.playerName, prefs.size, tournamentIO, aiClient);
+    tHost.broadcastSync();
+  } else {
+    void p2p.host(1);
+  }
+}
+
+function connectToRoom(): void {
+  const code = codeInput.value.trim().toUpperCase();
+  if (!/^[A-Z0-9]{4}$/.test(code)) {
+    setStatus(joinStatus, 'Le code fait 4 caractères (lettres et chiffres).', 'error');
+    codeInput.focus();
+    return;
+  }
+  if (!navigator.onLine) {
+    setStatus(joinStatus, 'Pas de connexion Internet : impossible de rejoindre un salon.', 'error');
+    return;
+  }
+  resetTournamentState();
+  void p2p.join(code);
+}
+
+/** Refreshes which parts of the online sheet are visible. */
+function renderOnlineSheet(): void {
+  const tournament = onlineKind === 'tournament';
+  const guestInLobby = tournament && p2p.role === 'guest' && p2p.isConnected;
+  $('online-title').textContent = tournament ? 'Tournoi en ligne' : 'Jouer en ligne';
+  $('online-tabs').classList.toggle('hidden-el', guestInLobby);
+  $('tab-host').classList.toggle('on', p2pTab === 'host');
+  $('tab-join').classList.toggle('on', p2pTab === 'join');
+  $('host-view').classList.toggle('hidden-el', p2pTab !== 'host' || guestInLobby);
+  $('join-view').classList.toggle('hidden-el', p2pTab !== 'join' || guestInLobby);
+  $('lobby-view').classList.toggle('hidden-el', !tournament || !(tHost || guestInLobby));
+  $('host-size').textContent = sizeLabel(prefs.size);
+  if (tournament) renderLobby();
+}
+
+function selectOnlineTab(tab: 'host' | 'join'): void {
+  p2pTab = tab;
+  if (tab === 'host' && p2p.role !== 'host') startHosting();
+  if (tab === 'join' && p2p.role === 'host') {
+    p2p.cleanup();
+    resetTournamentState();
+  }
+  renderOnlineSheet();
+}
+
+function openOnline(tab: 'host' | 'join'): void {
+  onlineKind = prefs.kind === 'tournament' ? 'tournament' : 'duel';
+  openOverlay('sheet-online');
+  selectOnlineTab(tab);
+  if (tab === 'join') codeInput.focus({ preventScroll: true });
+}
+
+function handleWelcome(kind: 'duel' | 'tournament'): void {
+  onlineKind = kind;
+  if (kind === 'duel') {
+    resetTallyIfNeeded(`p2p:${p2p.roomCode}:${Date.now()}`);
+    lastStart = null;
+    toast('Connecté ! La partie va commencer…');
+    return;
+  }
+  prefs.kind = 'tournament';
+  refreshHome();
+  if (prefs.playerName) p2p.send({ type: 'NAME', name: prefs.playerName });
+  renderOnlineSheet();
+}
+
+$('tab-host').addEventListener('click', () => selectOnlineTab('host'));
+$('tab-join').addEventListener('click', () => {
+  selectOnlineTab('join');
+  codeInput.focus();
+});
+codeInput.addEventListener('input', () => {
+  codeInput.value = codeInput.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4);
+});
+codeInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') connectToRoom();
+});
+$('btn-connect-peer').addEventListener('click', connectToRoom);
+$('btn-retry-host').addEventListener('click', startHosting);
+
+shareBtn.addEventListener('click', async () => {
+  if (!p2p.roomCode) return;
+  const url = inviteUrl(p2p.roomCode);
+  const what = onlineKind === 'tournament' ? 'mon tournoi' : 'ma partie';
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: 'Petits Carrés', text: `Rejoins ${what} avec le code ${p2p.roomCode} !`, url });
+      return;
+    } catch (err) {
+      if ((err as DOMException).name === 'AbortError') return;
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    toast('🔗 Lien copié !');
+  } catch {
+    toast(url, 6000);
+  }
+});
+
+window.addEventListener('online', () => {
+  if (openPanel?.id === 'sheet-online' && p2pTab === 'host' && !p2p.isActive) startHosting();
+});
+
+// ---- online: duel (2 phones) --------------------------------------------------------
 
 function startP2PRound(): void {
   if (p2p.role !== 'host' || !p2p.isConnected) return;
@@ -562,84 +566,293 @@ function sendSync(): void {
   p2p.send({ type: 'SYNC', size: game.config.size, starter: game.config.starter, moves: [...game.state.moves] });
 }
 
-function startHosting(): void {
-  $('host-view').classList.remove('failed');
-  codeText.textContent = '····';
-  qrImg.classList.add('hidden-el');
-  shareBtn.disabled = true;
-  if (!navigator.onLine) {
-    setStatus(hostStatus, 'Le jeu en ligne a besoin d’Internet pour mettre les téléphones en relation.', 'error');
-    return;
+// ---- online: tournament (4 phones) ------------------------------------------------
+
+const aiClient = new AIClient();
+let tHost: TournamentHost | null = null;
+let tClient = new TournamentClient();
+/** Tournament result already counted in the stats. */
+let tournamentCounted = false;
+
+const tournamentIO = {
+  send: (msg: P2PMessage, to?: string) => p2p.send(msg, to),
+  local: (msg: P2PMessage) => handleTournamentMessage(msg),
+  info: (text: string) => {
+    p2p.send({ type: 'INFO', text });
+    toast(text, 4000);
   }
-  void p2p.host();
+};
+
+function resetTournamentState(): void {
+  tHost?.dispose();
+  tHost = null;
+  tClient = new TournamentClient();
+  shownMatch = -1;
+  tournamentCounted = false;
 }
 
-function connectToRoom(): void {
-  const code = codeInput.value.trim().toUpperCase();
-  if (!/^[A-Z0-9]{4}$/.test(code)) {
-    setStatus(joinStatus, 'Le code fait 4 caractères (lettres et chiffres).', 'error');
-    codeInput.focus();
-    return;
-  }
-  if (!navigator.onLine) {
-    setStatus(joinStatus, 'Pas de connexion Internet : impossible de rejoindre un salon.', 'error');
-    return;
-  }
-  void p2p.join(code);
+function leaveTournament(): void {
+  if (p2p.isActive) p2p.leave();
+  resetTournamentState();
 }
 
-function selectOnlineTab(tab: 'host' | 'join'): void {
-  p2pTab = tab;
-  $('tab-host').classList.toggle('on', tab === 'host');
-  $('tab-join').classList.toggle('on', tab === 'join');
-  $('host-view').classList.toggle('hidden-el', tab !== 'host');
-  $('join-view').classList.toggle('hidden-el', tab !== 'join');
-  $('host-size').textContent = sizeLabel(prefs.size);
-  if (tab === 'host' && p2p.role !== 'host') startHosting();
-  if (tab === 'join' && p2p.role === 'host') p2p.cleanup();
+function handleHostTournamentMessage(msg: P2PMessage, peer: string): void {
+  if (!tHost) return;
+  if (msg.type === 'NAME') {
+    const seat = tHost.seatOfPeer(peer);
+    if (seat >= 0) tHost.rename(seat, msg.name);
+  } else if (msg.type === 'T_MOVE') tHost.submitFromPeer(peer, msg.m, msg.edge, msg.seq);
+  else if (msg.type === 'SYNC_REQUEST') tHost.syncPeer(peer);
 }
 
-function openOnline(tab: 'host' | 'join'): void {
-  openOverlay('sheet-online');
-  selectOnlineTab(tab);
-  if (tab === 'join') codeInput.focus({ preventScroll: true });
+function sendTournamentMove(edge: number, seq: number): void {
+  const m = shownMatch;
+  if (m < 0) return;
+  tClient.applyMove(m, edge, seq);
+  // A refused move (should not happen) realigns this phone on the host's state.
+  if (tHost) {
+    if (!tHost.submit(tClient.you, m, edge, seq, 'host')) tHost.broadcastSync();
+  } else p2p.send({ type: 'T_MOVE', m, edge, seq });
 }
 
-$('tab-host').addEventListener('click', () => selectOnlineTab('host'));
-$('tab-join').addEventListener('click', () => {
-  selectOnlineTab('join');
-  codeInput.focus();
-});
-codeInput.addEventListener('input', () => {
-  codeInput.value = codeInput.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4);
-});
-codeInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') connectToRoom();
-});
-$('btn-connect-peer').addEventListener('click', connectToRoom);
-$('btn-retry-host').addEventListener('click', startHosting);
-
-shareBtn.addEventListener('click', async () => {
-  if (!p2p.roomCode) return;
-  const url = inviteUrl(p2p.roomCode);
-  if (navigator.share) {
-    try {
-      await navigator.share({ title: 'Petits Carrés', text: `Rejoins ma partie avec le code ${p2p.roomCode} !`, url });
-      return;
-    } catch (err) {
-      if ((err as DOMException).name === 'AbortError') return;
+/** Messages from the host (or, on the host phone, from its own TournamentHost). */
+function handleTournamentMessage(msg: P2PMessage): void {
+  switch (msg.type) {
+    case 'LOBBY': {
+      const wasStarted = tClient.started;
+      tClient.applyLobby(msg);
+      shownMatch = -1;
+      tournamentCounted = false;
+      if (wasStarted) {
+        // The host set up another tournament with the same phones.
+        showView('home');
+        openOverlay('sheet-online');
+      }
+      if (openPanel?.id === 'sheet-online') renderOnlineSheet();
+      break;
     }
+    case 'T_SYNC': {
+      const first = !tClient.started;
+      const started = tClient.applySync(msg);
+      if (first) {
+        closeOverlay(true);
+        showView('bracket');
+      }
+      onTournamentChanged(started);
+      break;
+    }
+    case 'T_MOVE':
+      if (!tClient.applyMove(msg.m, msg.edge, msg.seq)) {
+        if (!tHost) p2p.send({ type: 'SYNC_REQUEST' });
+        return;
+      }
+      if (msg.m === shownMatch && !game.applyRemoteMove(msg.edge, msg.seq)) refreshShownMatch();
+      if (currentView === 'bracket') renderBracket();
+      break;
+    case 'INFO':
+      toast(msg.text, 4000);
+      break;
   }
-  try {
-    await navigator.clipboard.writeText(url);
-    toast('🔗 Lien copié !');
-  } catch {
-    toast(url, 6000);
+}
+
+function onTournamentChanged(started: number[]): void {
+  const mine = tClient.myLiveMatch;
+  if (mine >= 0 && started.includes(mine)) {
+    toast(mine === 2 ? 'La finale commence !' : tClient.matches[mine].replays ? 'Égalité : on rejoue !' : 'Ton match commence !');
+    enterMatch(mine, false);
+  } else if (started.includes(2) && !tClient.stillIn && currentView !== 'home') {
+    toast('La finale commence : tu la regardes en direct.');
+    enterMatch(2, true);
+  } else if (shownMatch >= 0) {
+    refreshShownMatch();
   }
+
+  const champion = tClient.championSeat;
+  if (champion !== null && !tournamentCounted) {
+    tournamentCounted = true;
+    stats = recordResult('tournament', champion === tClient.you ? 1 : 2, 1);
+  }
+  if (currentView === 'bracket') renderBracket();
+}
+
+/** Shows match m on the board, as a player when this phone holds a side. */
+function enterMatch(m: number, spectate: boolean): void {
+  const match = tClient.matches[m];
+  if (!match?.board || match.a === null || match.b === null) return;
+  shownMatch = m;
+  const side = spectate ? null : tClient.sideOf(m);
+  const a = tClient.name(match.a);
+  const b = tClient.name(match.b);
+  game.start(
+    { size: tClient.size, mode: 'tournament', starter: match.starter, localPlayer: side ?? undefined, labels: { 1: initials(a), 2: initials(b) } },
+    [...match.board.moves]
+  );
+  beginMatch(`${ROUND_NAMES[m]} : ${a} contre ${b}${side ? '' : ' (en spectateur)'}`);
+}
+
+/** Realigns the board with the host's state for the match on screen. */
+function refreshShownMatch(): void {
+  const match = tClient.matches[shownMatch];
+  if (!match?.board || game.config.mode !== 'tournament') return;
+  const moves = match.board.moves;
+  const same = moves.length === game.state.moves.length && moves.every((e, i) => e === game.state.moves[i]);
+  if (same) return;
+  game.start({ ...game.config, starter: match.starter }, [...moves]);
+}
+
+function showTournamentResult(): void {
+  const m = shownMatch;
+  const match = tClient.matches[m];
+  if (!match) return;
+  const { 1: s1, 2: s2 } = game.state.scores;
+  const winnerSeat = s1 === s2 ? null : s1 > s2 ? match.a : match.b;
+  const winnerName = tClient.name(winnerSeat);
+  const meWon = winnerSeat === tClient.you;
+
+  let title: string;
+  if (winnerSeat === null) title = 'Égalité ! Le match va être rejoué 🤝';
+  else if (m === 2) title = meWon ? '🏆 Tu remportes le tournoi !' : `🏆 ${winnerName} remporte le tournoi !`;
+  else title = meWon ? 'Tu es en finale ! 🎉' : `${winnerName} passe en finale !`;
+  if (meWon) game.sfx.playVictory();
+
+  $('winner-title').textContent = title;
+  $('winner-round').textContent = ROUND_NAMES[m];
+  $('winner-round').classList.remove('hidden-el');
+  fillFinalScore();
+  $('match-tally').textContent =
+    winnerSeat === null ? '' : m < 2 && meWon ? "La finale commence dès que l'autre demi-finale est terminée." : '';
+  $('btn-gameover-home').textContent = 'Quitter';
+  $('btn-replay').textContent = 'Voir le tableau';
+  openOverlay('modal-gameover');
+}
+
+function renderLobby(): void {
+  const host = !!tHost;
+  const seats = tClient.seats;
+  const list = $('seat-list');
+  list.innerHTML = '';
+  seats.forEach((s, i) => {
+    const editable = host && (s.kind === 'open' || s.kind === 'ai');
+    const row = document.createElement(editable ? 'button' : 'div');
+    row.className = `seat${i === tClient.you ? ' me' : ''}${s.kind === 'open' ? ' open' : ''}`;
+    if (editable) (row as HTMLButtonElement).type = 'button';
+    const tag =
+      i === tClient.you ? 'Toi' : s.kind === 'host' ? 'Hôte' : s.kind === 'phone' ? 'Téléphone' : s.kind === 'ai' ? 'IA' : host ? '+ IA' : 'Libre';
+    const name = s.kind === 'open' ? 'En attente d’un téléphone…' : s.name;
+    row.innerHTML = `<span class="num">${i + 1}</span><span class="who">${escapeHTML(name)}</span><span class="tag${
+      i === tClient.you ? ' me' : ''
+    }">${tag}</span>`;
+    if (editable) row.addEventListener('click', () => tHost?.cycleSeat(i));
+    list.append(row);
+  });
+
+  const open = seats.filter((s) => s.kind === 'open').length;
+  $('lobby-host-actions').classList.toggle('hidden-el', !host);
+  $('btn-start-tournament').classList.toggle('hidden-el', !host);
+  ($('btn-start-tournament') as HTMLButtonElement).disabled = !tHost?.canStart;
+  ($('btn-fill-ai') as HTMLButtonElement).disabled = open === 0;
+  $('lobby-hint').textContent = host
+    ? open
+      ? `Encore ${plural(open, 'place')} : partage le code, ou touche une place pour y mettre une IA.`
+      : `Tout le monde est là · grille ${sizeLabel(tClient.size)}. C'est parti ?`
+    : `Grille ${sizeLabel(tClient.size)} · l'hôte lance le tournoi quand les 4 places sont prises.`;
+  const nameInput = $<HTMLInputElement>('my-name');
+  if (document.activeElement !== nameInput) nameInput.value = prefs.playerName;
+}
+
+let nameTimer: number | undefined;
+$<HTMLInputElement>('my-name').addEventListener('input', (e) => {
+  const value = (e.target as HTMLInputElement).value;
+  window.clearTimeout(nameTimer);
+  nameTimer = window.setTimeout(() => {
+    setPrefs({ playerName: cleanName(value, '') });
+    if (tHost) tHost.rename(tHost.hostSeat, value);
+    else if (p2p.isConnected) p2p.send({ type: 'NAME', name: cleanName(value, '') || 'Joueur' });
+  }, 350);
+});
+$('btn-fill-ai').addEventListener('click', () => tHost?.fillWithAI('medium'));
+$('btn-shuffle').addEventListener('click', () => tHost?.shuffle());
+$('btn-start-tournament').addEventListener('click', () => {
+  if (!tHost?.canStart) return;
+  p2p.setLocked(true);
+  tHost.start();
 });
 
-window.addEventListener('online', () => {
-  if (openPanel?.id === 'sheet-online' && p2pTab === 'host' && !p2p.isActive) startHosting();
+function renderBracket(): void {
+  if (!tClient.started) return;
+  $('bracket-size').textContent = sizeLabel(tClient.size);
+  const you = tClient.you;
+  $('bracket-list').innerHTML = tClient.matches
+    .map((m, i) => {
+      const live = tClient.isLive(i);
+      const scores = m.board ? [m.board.scores[1], m.board.scores[2]] : null;
+      const side = (seat: number | null, k: 0 | 1) => {
+        if (seat === null) return `<div class="match-row tbd"><span class="who">Vainqueur demi-finale ${k + 1}</span></div>`;
+        const state = m.winner === null ? '' : m.winner === seat ? 'won' : 'lost';
+        const pts = scores && (live || m.winner !== null) ? `<span class="pts">${scores[k]}</span>` : '';
+        const tag = seat === you ? '<span class="tag me">Toi</span>' : tClient.isAI(seat) ? '<span class="tag">IA</span>' : '';
+        return `<div class="match-row ${state}"><span class="who">${escapeHTML(tClient.name(seat))}</span>${tag}${pts}</div>`;
+      };
+      let status = 'À venir';
+      if (live) status = m.replays ? 'En cours · match rejoué' : 'En cours';
+      else if (m.winner !== null) status = 'Terminé';
+      else if (m.board?.isOver) status = 'Égalité : nouveau match dans un instant';
+      const mine = tClient.sideOf(i) !== null;
+      const action = live ? `<button type="button" class="watch-btn${mine ? ' mine' : ''}" data-watch="${i}">${mine ? 'Jouer' : 'Regarder'}</button>` : '';
+      const cls = `match-card${i === 2 ? ' final' : ''}${live ? ' current' : ''}`;
+      return `<div class="${cls}"><span class="match-tag">${ROUND_NAMES[i]}</span>${side(m.a, 0)}${side(m.b, 1)}
+        <div class="match-foot"><span class="match-status${live ? ' live' : ''}">${status}</span>${action}</div></div>`;
+    })
+    .join('');
+  $('bracket-list').querySelectorAll<HTMLButtonElement>('[data-watch]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const m = Number(b.dataset.watch);
+      enterMatch(m, tClient.sideOf(m) === null);
+    })
+  );
+
+  const champion = tClient.championSeat;
+  $('bracket-champion').classList.toggle('hidden-el', champion === null);
+  if (champion !== null) {
+    const who = champion === you ? 'Tu remportes' : `<span>${escapeHTML(tClient.name(champion))}</span> remporte`;
+    $('bracket-champion').innerHTML = `🏆 ${who} le tournoi !`;
+  }
+  const next = $<HTMLButtonElement>('btn-next-match');
+  const mine = tClient.myLiveMatch;
+  next.disabled = false;
+  if (mine >= 0) {
+    $('next-title').textContent = 'Reprendre mon match';
+    $('next-sub').textContent = ROUND_NAMES[mine];
+  } else if (champion !== null) {
+    $('next-title').textContent = tHost ? 'Nouveau tournoi' : 'Tournoi terminé';
+    $('next-sub').textContent = tHost ? 'Mêmes téléphones, nouveau tableau' : "L'hôte peut relancer un tournoi";
+    next.disabled = !tHost;
+  } else if (tClient.isLive(2)) {
+    $('next-title').textContent = 'Regarder la finale';
+    $('next-sub').textContent = `${tClient.name(tClient.matches[2].a)} contre ${tClient.name(tClient.matches[2].b)}`;
+  } else {
+    $('next-title').textContent = tClient.stillIn ? 'En attente…' : 'Tu es éliminé·e';
+    $('next-sub').textContent = tClient.stillIn ? "La suite démarre dès que l'autre match est terminé" : 'Regarde les autres matchs en direct';
+    next.disabled = true;
+  }
+}
+
+$('btn-next-match').addEventListener('click', () => {
+  const mine = tClient.myLiveMatch;
+  if (mine >= 0) return enterMatch(mine, false);
+  if (tClient.championSeat !== null && tHost) {
+    p2p.setLocked(false);
+    tHost.reset();
+    return;
+  }
+  if (tClient.isLive(2)) enterMatch(2, true);
+});
+$('btn-bracket-home').addEventListener('click', () => showView('home'));
+$('btn-leave-tournament').addEventListener('click', () => {
+  const warn = tHost && tClient.championSeat === null ? ' En tant qu’hôte, cela arrête le tournoi pour tout le monde.' : '';
+  if (tClient.championSeat === null && !window.confirm(`Quitter le tournoi ?${warn}`)) return;
+  leaveTournament();
+  showView('home');
 });
 
 // ---- home -----------------------------------------------------------------------
@@ -650,7 +863,7 @@ const sizeButtons = document.querySelectorAll<HTMLButtonElement>('#size-select b
 
 /** Where "Reprendre" leads, if anywhere. */
 function resumeTarget(): View | null {
-  if (prefs.kind === 'tournament') return tournament && !tournament.isOver ? 'bracket' : null;
+  if (prefs.kind === 'tournament') return tClient.started && p2p.isActive ? 'bracket' : null;
   const mode = game.config.mode;
   if (!game.hasMatchInProgress || mode === 'tournament') return null;
   return mode !== 'p2p' || p2p.isConnected ? 'game' : null;
@@ -665,18 +878,16 @@ function refreshHome(): void {
   levelButtons.forEach((b) => b.classList.toggle('on', b.dataset.level === prefs.level));
   sizeButtons.forEach((b) => b.classList.toggle('on', Number(b.dataset.size) === prefs.size));
   $('row-level').classList.toggle('hidden-el', prefs.kind !== 'solo');
-  $('row-lineup').classList.toggle('hidden-el', prefs.kind !== 'tournament');
-  $('lineup-summary').textContent = lineupSummary(prefs.contestants);
 
   const size = `grille ${sizeLabel(prefs.size)}`;
   const titles: Record<PlayKind, [string, string]> = {
     solo: ['Jouer', `IA ${LEVEL_NAMES[prefs.level]} · ${size}`],
     local: ['Jouer', `À deux sur cet écran · ${size}`],
-    tournament: ['Organiser le tournoi', `4 joueurs · ${size}`],
+    tournament: ['Créer le tournoi', `4 téléphones (ou IA) · ${size}`],
     online: ['Créer un salon', `2 téléphones · ${size}`]
   };
   [$('play-title').textContent, $('play-sub').textContent] = titles[prefs.kind];
-  $('btn-join-code').classList.toggle('hidden-el', prefs.kind !== 'online');
+  $('btn-join-code').classList.toggle('hidden-el', prefs.kind !== 'online' && prefs.kind !== 'tournament');
 
   const target = resumeTarget();
   $('btn-resume').classList.toggle('hidden-el', !target);
@@ -692,11 +903,15 @@ function setPrefs(patch: Partial<Prefs>): void {
 
 tiles.forEach((t) => t.addEventListener('click', () => setPrefs({ kind: t.dataset.kind as PlayKind })));
 levelButtons.forEach((b) => b.addEventListener('click', () => setPrefs({ level: b.dataset.level as AILevelPref })));
-sizeButtons.forEach((b) => b.addEventListener('click', () => setPrefs({ size: Number(b.dataset.size) })));
+sizeButtons.forEach((b) =>
+  b.addEventListener('click', () => {
+    setPrefs({ size: Number(b.dataset.size) });
+    tHost?.setSize(prefs.size);
+  })
+);
 
 $('btn-play').addEventListener('click', () => {
-  if (prefs.kind === 'online') openOnline('host');
-  else if (prefs.kind === 'tournament') openLineup();
+  if (prefs.kind === 'online' || prefs.kind === 'tournament') openOnline('host');
   else startLocalMatch();
 });
 $('btn-join-code').addEventListener('click', () => openOnline('join'));
@@ -766,11 +981,14 @@ function openStats(): void {
   };
   const duo = stats.pvp;
   const duoTotal = duo.w + duo.l + duo.d;
+  const tour = stats.tournament;
+  const tourTotal = tour.w + tour.l;
   $('stats-list').innerHTML = [
     vs('ai-easy', 'IA Facile'),
     vs('ai-medium', 'IA Malin'),
     vs('ai-expert', 'IA Expert'),
-    vs('p2p', 'En ligne'),
+    vs('p2p', 'En ligne (duel)'),
+    row('Tournois', tourTotal ? `${plural(tour.w, 'gagné')} sur ${tourTotal}` : 'aucun tournoi', tourTotal ? tour.w / tourTotal : 0),
     row('À deux', duoTotal ? `J1 ${duo.w} – ${duo.l} J2 · ${duo.d} nul${duo.d > 1 ? 's' : ''}` : 'aucune partie', null)
   ].join('');
   openOverlay('sheet-stats');
@@ -805,27 +1023,24 @@ document.addEventListener('fullscreenchange', () => {
 $('btn-pause').addEventListener('click', () => {
   const { mode, size } = game.config;
   let label: string;
-  if (mode === 'tournament') label = ROUND_NAMES[Math.max(0, tournament?.currentIndex ?? 0)];
+  if (mode === 'tournament') label = `Tournoi · ${ROUND_NAMES[Math.max(0, shownMatch)]}`;
   else if (mode === 'p2p') label = `En ligne · salon ${p2p.roomCode}`;
   else label = isAIMode(mode) ? playerNames()[2] : 'À deux';
   $('pause-info').textContent = `${label} · grille ${sizeLabel(size)}`;
   $('restart-label').textContent =
-    mode === 'p2p' ? (p2p.role === 'guest' ? 'Proposer une nouvelle manche' : 'Nouvelle manche') : mode === 'tournament' ? 'Rejouer ce match' : 'Recommencer';
-  $('home-label').textContent = mode === 'p2p' ? 'Quitter le salon' : mode === 'tournament' ? 'Tableau du tournoi' : 'Accueil';
+    mode === 'p2p' ? (p2p.role === 'guest' ? 'Proposer une nouvelle manche' : 'Nouvelle manche') : mode === 'tournament' ? 'Tableau du tournoi' : 'Recommencer';
+  $('home-label').textContent = mode === 'p2p' ? 'Quitter le salon' : mode === 'tournament' ? 'Quitter le tournoi' : 'Accueil';
   soundSwitches[1].checked = prefs.sound;
   openOverlay('sheet-pause');
 });
 
-$('btn-pause-resume').addEventListener('click', closeOverlay);
+$('btn-pause-resume').addEventListener('click', () => closeOverlay());
 
 function replay(): void {
   const { mode, size } = game.config;
   if (mode === 'tournament') {
-    if (tournament?.isOver) {
-      closeOverlay();
-      return showView('bracket');
-    }
-    return playTournamentMatch();
+    closeOverlay();
+    return showView('bracket');
   }
   if (mode !== 'p2p') return startLocalMatch(mode, size);
   if (!p2p.isConnected) return leaveToHome();
@@ -839,8 +1054,13 @@ function replay(): void {
 
 function leaveToHome(): void {
   closeOverlay();
-  if (game.config.mode === 'tournament' && tournament) return showView('bracket');
-  if (game.config.mode === 'p2p' && p2p.isActive) p2p.leave();
+  if (game.config.mode === 'tournament') {
+    const warn = tHost && tClient.championSeat === null ? ' En tant qu’hôte, cela arrête le tournoi pour tout le monde.' : '';
+    if (tClient.championSeat === null && !window.confirm(`Quitter le tournoi ?${warn}`)) return;
+    leaveTournament();
+  } else if (game.config.mode === 'p2p' && p2p.isActive) {
+    p2p.leave();
+  }
   showView('home');
 }
 

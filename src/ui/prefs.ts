@@ -1,5 +1,3 @@
-import type { AILevel } from '../game/ai';
-import type { Contestant } from '../game/Tournament';
 import type { Player } from '../game/types';
 
 export type PlayKind = 'solo' | 'local' | 'tournament' | 'online';
@@ -12,8 +10,8 @@ export interface Prefs {
   size: number;
   sound: boolean;
   starter: StarterPref;
-  /** Last tournament line-up, kept for the next one. */
-  contestants: Contestant[];
+  /** Name shown to the other phones in online games. */
+  playerName: string;
 }
 
 export interface Record3 {
@@ -23,7 +21,8 @@ export interface Record3 {
 }
 
 /** Results from the point of view of this device (player 1 for local modes). */
-export type StatsMode = 'ai-easy' | 'ai-medium' | 'ai-expert' | 'pvp' | 'p2p';
+/** 'tournament' counts whole online tournaments (won = champion). */
+export type StatsMode = 'ai-easy' | 'ai-medium' | 'ai-expert' | 'pvp' | 'p2p' | 'tournament';
 export type Stats = Record<StatsMode, Record3>;
 
 const PREFS_KEY = 'dotslines.prefs.v2';
@@ -36,24 +35,8 @@ const DEFAULT_PREFS: Prefs = {
   size: 4,
   sound: true,
   starter: 'alternate',
-  contestants: [
-    { name: 'Joueur 1', ai: null },
-    { name: 'Joueur 2', ai: null },
-    { name: 'Joueur 3', ai: null },
-    { name: 'IA Expert', ai: 'expert' }
-  ]
+  playerName: ''
 };
-
-const AI_LEVELS: (AILevel | null)[] = [null, 'easy', 'medium', 'expert'];
-
-function readContestants(raw: unknown): Contestant[] {
-  if (!Array.isArray(raw) || raw.length !== 4) return DEFAULT_PREFS.contestants.map((c) => ({ ...c }));
-  return raw.map((c, i) => {
-    const d = DEFAULT_PREFS.contestants[i];
-    const name = typeof c?.name === 'string' && c.name.trim() ? c.name.trim().slice(0, 14) : d.name;
-    return { name, ai: oneOf(c?.ai ?? null, AI_LEVELS, d.ai) };
-  });
-}
 
 function read<T>(key: string): Partial<T> {
   try {
@@ -85,7 +68,7 @@ export function loadPrefs(): Prefs {
     size: oneOf(raw.size, SIZES, DEFAULT_PREFS.size),
     sound: bool(raw.sound, DEFAULT_PREFS.sound),
     starter: oneOf(raw.starter, ['alternate', 'random', 'me', 'opponent'] as const, DEFAULT_PREFS.starter),
-    contestants: readContestants(raw.contestants)
+    playerName: typeof raw.playerName === 'string' ? raw.playerName.slice(0, 14) : ''
   };
 }
 
@@ -98,7 +81,8 @@ const emptyStats = (): Stats => ({
   'ai-medium': { w: 0, l: 0, d: 0 },
   'ai-expert': { w: 0, l: 0, d: 0 },
   pvp: { w: 0, l: 0, d: 0 },
-  p2p: { w: 0, l: 0, d: 0 }
+  p2p: { w: 0, l: 0, d: 0 },
+  tournament: { w: 0, l: 0, d: 0 }
 });
 
 export function loadStats(): Stats {
@@ -132,4 +116,5 @@ export function resetStats(): Stats {
 }
 
 /** Wins that count for the trophy counter on the home screen (vs AI and online). */
-export const trophyCount = (s: Stats): number => s['ai-easy'].w + s['ai-medium'].w + s['ai-expert'].w + s.p2p.w;
+export const trophyCount = (s: Stats): number =>
+  s['ai-easy'].w + s['ai-medium'].w + s['ai-expert'].w + s.p2p.w + s.tournament.w;

@@ -14,8 +14,8 @@ l'organisation d'[Iro-Koku](https://github.com/engoB/IroKoku) (cartes, onglets, 
 palette « carnet & post-it » : cahier à grille bleue, encre marine, cartes au trait avec ombre décalée, accents
 menthe et jaune post-it, rubans adhésifs. Polices : Baloo 2, Nunito et Caveat (auto-hébergées).
 
-- **Accueil** : plateau de démonstration qui se joue tout seul, 4 modes (Solo · À deux · Tournoi · En ligne),
-  difficulté / joueurs et taille de grille, bouton *Jouer*, barre Règles · Stats · Réglages.
+- **Accueil** : plateau de démonstration qui se joue tout seul, 4 modes (Solo · À deux · En ligne · Tournoi),
+  difficulté et taille de grille, bouton *Jouer*, barre Règles · Stats · Réglages.
 - **Partie** : écran maximisé (plein écran automatique sur téléphone quand le navigateur le permet), cartes de score
   avec bande de couleur, cadre du plateau à la couleur du joueur dont c'est le tour, bandeau de messages
   (« +2 carrés ! Tu rejoues. »), pause (reprendre, recommencer, plein écran, accueil).
@@ -30,14 +30,16 @@ menthe et jaune post-it, rubans adhésifs. Polices : Baloo 2, Nunito et Caveat (
 - **IA Expert** : en fin de partie, elle **résout exactement** la position (alpha-bêta + table de transposition,
   règles de capture/double-cross de Berlekamp et évaluation exacte des chaînes et boucles). Elle tourne dans un
   Web Worker pour ne jamais figer l'animation.
-- **Tournoi à 4** (sur un seul écran) : chaque joueur est humain ou IA (Facile / Malin / Expert),
-  demi-finales 1 contre 2 et 3 contre 4, puis finale entre les vainqueurs ; match rejoué en cas d'égalité,
-  tirage au sort de l'ordre, tableau du tournoi.
+- **Tournoi en ligne à 4 téléphones** : l'hôte crée un salon (code + QR), les autres le rejoignent et
+  choisissent leur prénom ; les places libres peuvent être tenues par une IA. Les deux demi-finales
+  (1 contre 2, 3 contre 4) se jouent **en même temps**, chacun sur son téléphone, puis la finale se lance
+  toute seule ; les éliminés la regardent en direct. Tableau avec scores en direct, match rejoué en cas
+  d'égalité, une IA remplace un téléphone qui se déconnecte, « Nouveau tournoi » avec les mêmes téléphones.
 - **2 joueurs (1 écran)** et **2 téléphones (P2P)** : code salon à 4 caractères, QR code généré localement,
   lien d'invitation `?room=XXXX`, revanche, reconnexion au même salon, salon limité à 2 téléphones.
 - Le premier joueur alterne à chaque manche ou est tiré au sort (réglable) ; score des manches affiché.
-- PWA installable, polices auto-hébergées, 100 % hors-ligne : Solo, À deux et Tournoi n'ont jamais besoin de réseau ;
-  seul le mode En ligne demande Internet, pour la mise en relation des deux téléphones.
+- PWA installable, polices auto-hébergées, 100 % hors-ligne : Solo et À deux n'ont jamais besoin de réseau ;
+  En ligne et Tournoi demandent Internet, uniquement pour la mise en relation des téléphones.
 - Réglages mémorisés (mode, taille, son).
 
 ## Développement
@@ -87,6 +89,9 @@ src/
 │   ├── P2PManager.ts       # WebRTC via PeerJS
 │   ├── Tournament.ts       # tableau du tournoi à 4
 │   └── types.ts            # types + validation des messages P2P
+├── online/
+│   ├── TournamentHost.ts   # arbitre du tournoi (sur le téléphone hôte) : places, coups, IA, diffusion
+│   └── TournamentClient.ts # état du tournoi vu par chaque téléphone
 ├── ui/
 │   ├── DemoBoard.ts        # plateau de démo animé de l'accueil
 │   ├── icons.ts            # icônes SVG inline

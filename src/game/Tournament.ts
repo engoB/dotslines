@@ -20,8 +20,8 @@ export type RoundName = 'Demi-finale 1' | 'Demi-finale 2' | 'Finale';
 export const ROUND_NAMES: RoundName[] = ['Demi-finale 1', 'Demi-finale 2', 'Finale'];
 
 /**
- * Four-player knockout: 1 vs 2 and 3 vs 4, then the two winners meet in the
- * final. A drawn match is simply replayed.
+ * Four-player knockout: 1 vs 2 and 3 vs 4 (played at the same time), then the
+ * two winners meet in the final. A drawn match is simply replayed.
  */
 export class Tournament {
   readonly players: Contestant[];
@@ -37,14 +37,12 @@ export class Tournament {
     ];
   }
 
-  /** Index of the next match to play, or -1 once the champion is known. */
-  get currentIndex(): number {
-    return this.matches.findIndex((m) => m.winner === null);
-  }
-
-  get current(): BracketMatch | null {
-    const i = this.currentIndex;
-    return i < 0 ? null : this.matches[i];
+  /** Matches whose two players are known and that have no winner yet. */
+  get playable(): number[] {
+    return [0, 1, 2].filter((i) => {
+      const m = this.matches[i];
+      return m.a !== null && m.b !== null && m.winner === null;
+    });
   }
 
   get champion(): Contestant | null {
@@ -57,12 +55,12 @@ export class Tournament {
   }
 
   /**
-   * Records the result of the current match (scores of its `a` and `b` side).
+   * Records the result of a match (scores of its `a` and `b` side).
    * Returns 'draw' when the match must be replayed.
    */
-  record(scoreA: number, scoreB: number): 'win' | 'draw' {
-    const m = this.current;
-    if (!m || m.a === null || m.b === null) throw new Error('Aucun match en cours');
+  record(index: number, scoreA: number, scoreB: number): 'win' | 'draw' {
+    const m = this.matches[index];
+    if (!m || m.a === null || m.b === null || m.winner !== null) throw new Error('Match non jouable');
     m.score = [scoreA, scoreB];
     if (scoreA === scoreB) {
       m.replays++;

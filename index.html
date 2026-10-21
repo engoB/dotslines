@@ -47,7 +47,7 @@
           <i class="tile-ico" data-icon="duo"></i><span><b>À deux</b><small>même écran</small></span>
         </button>
         <button class="tile" type="button" role="radio" data-kind="tournament">
-          <i class="tile-ico" data-icon="bracket"></i><span><b>Tournoi</b><small>4 joueurs</small></span>
+          <i class="tile-ico" data-icon="bracket"></i><span><b>Tournoi</b><small>4 téléphones</small></span>
         </button>
         <button class="tile" type="button" role="radio" data-kind="online">
           <i class="tile-ico" data-icon="phones"></i><span><b>En ligne</b><small>2 téléphones</small></span>
@@ -62,10 +62,6 @@
             <button type="button" data-level="medium">Malin</button>
             <button type="button" data-level="expert">Expert</button>
           </div>
-        </div>
-        <div class="opt-row hidden-el" id="row-lineup">
-          <span class="opt-label">Joueurs</span>
-          <button id="btn-edit-lineup" class="lineup-btn" type="button"><span id="lineup-summary">4 joueurs</span><b>Modifier</b></button>
         </div>
         <div class="opt-row">
           <span class="opt-label">Grille</span>
@@ -130,25 +126,12 @@
         <button id="btn-next-match" class="btn btn-primary btn-xl" type="button">
           <span id="next-title">Jouer</span><small id="next-sub"></small>
         </button>
-        <button id="btn-new-tournament" class="btn btn-sm hidden-el" type="button"><i data-icon="redo"></i> Nouveau tournoi</button>
+        <button id="btn-leave-tournament" class="btn btn-sm" type="button"><i data-icon="door"></i> Quitter le tournoi</button>
       </div>
     </section>
 
     <!-- ═════════ FEUILLES ═════════ -->
     <div id="scrim" class="scrim" hidden></div>
-
-    <section id="sheet-tournament" class="sheet" role="dialog" aria-modal="true" aria-labelledby="tournament-title" hidden>
-      <div class="sheet-head">
-        <h2 id="tournament-title">Les 4 joueurs</h2>
-        <button class="close-btn" type="button" data-close aria-label="Fermer" data-icon="close"></button>
-      </div>
-      <p class="hint">Demi-finales : 1 contre 2 et 3 contre 4, puis les deux vainqueurs s'affrontent en finale. Touche le type pour alterner Humain / IA.</p>
-      <div id="lineup" class="lineup"></div>
-      <div class="sheet-actions">
-        <button id="btn-shuffle" class="btn btn-sm" type="button"><i data-icon="shuffle"></i> Tirage au sort</button>
-      </div>
-      <button id="btn-start-tournament" class="btn btn-primary btn-lg" type="button">Lancer le tournoi</button>
-    </section>
 
     <section id="sheet-online" class="sheet" role="dialog" aria-modal="true" aria-labelledby="online-title" hidden>
       <div class="sheet-head">
@@ -176,7 +159,20 @@
         </div>
         <p class="hint">Le téléphone qui crée le salon choisit la taille de la grille.</p>
       </div>
-      <p class="hint muted">Internet sert seulement à mettre les deux téléphones en relation ; les coups passent ensuite directement de l'un à l'autre.</p>
+      <div id="lobby-view" class="lobby hidden-el">
+        <label class="name-row"><span>Ton prénom</span>
+          <input id="my-name" type="text" maxlength="14" autocomplete="nickname" spellcheck="false" placeholder="Prénom" enterkeyhint="done" />
+        </label>
+        <p class="lineup-sep">Demi-finales : 1 contre 2 · 3 contre 4</p>
+        <div id="seat-list" class="seat-list"></div>
+        <p id="lobby-hint" class="hint"></p>
+        <div id="lobby-host-actions" class="sheet-actions">
+          <button id="btn-fill-ai" class="btn btn-sm" type="button"><i data-icon="robot"></i> IA aux places libres</button>
+          <button id="btn-shuffle" class="btn btn-sm" type="button"><i data-icon="shuffle"></i> Tirage au sort</button>
+        </div>
+        <button id="btn-start-tournament" class="btn btn-primary btn-lg" type="button" disabled>Lancer le tournoi</button>
+      </div>
+      <p class="hint muted">Internet sert seulement à mettre les téléphones en relation ; les coups passent ensuite directement de l'un à l'autre.</p>
     </section>
 
     <section id="sheet-settings" class="sheet" role="dialog" aria-modal="true" aria-labelledby="settings-title" hidden>
@@ -213,7 +209,7 @@
         <li><b>Ferme un carré, rejoue !</b> Celui qui trace le 4ᵉ côté d'un carré le gagne et rejoue aussitôt.</li>
         <li><b>Le plus de carrés gagne.</b> La partie s'arrête quand tous les carrés sont pris.</li>
         <li><b>Astuce.</b> Évite de tracer le 3ᵉ côté d'un carré. En fin de partie, laisser 2 carrés à l'adversaire peut t'offrir toute la chaîne suivante : c'est le <i>double-cross</i>.</li>
-        <li><b>Tournoi.</b> 4 joueurs (humains ou IA) : deux demi-finales, puis une finale entre les vainqueurs. En cas d'égalité, le match est rejoué.</li>
+        <li><b>Tournoi en ligne.</b> 4 téléphones (ou des IA pour compléter) : les deux demi-finales se jouent en même temps, puis les vainqueurs s'affrontent en finale pendant que les autres regardent. En cas d'égalité, le match est rejoué.</li>
       </ol>
       <p class="hint">Sur téléphone : pose le doigt près d'un trait pour le prévisualiser, glisse pour ajuster, relâche pour le tracer.</p>
     </section>

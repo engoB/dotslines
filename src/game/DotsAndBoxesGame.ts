@@ -114,13 +114,15 @@ export class DotsAndBoxesGame {
   public canLocalPlayerAct(): boolean {
     if (this.state.isOver || this.aiThinking) return false;
     const { mode, localPlayer, ai } = this.config;
-    if (mode === 'p2p') return this.state.currentPlayer === localPlayer;
+    // Networked games: only the side held on this phone (none when spectating).
+    if (mode === 'p2p' || mode === 'tournament') return this.state.currentPlayer === localPlayer;
     return !ai?.[this.state.currentPlayer];
   }
 
   /** Applies a move from the other phone. Returns false when out of sync. */
   public applyRemoteMove(edge: number, seq: number): boolean {
-    if (this.config.mode !== 'p2p' || seq !== this.state.moves.length) return false;
+    const { mode } = this.config;
+    if ((mode !== 'p2p' && mode !== 'tournament') || seq !== this.state.moves.length) return false;
     if (this.state.currentPlayer === this.config.localPlayer) return false;
     if (!this.state.isFree(edge)) return false;
     this.playEdge(edge, 'remote');
