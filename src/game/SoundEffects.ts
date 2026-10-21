@@ -2,8 +2,6 @@
 export class SoundEffects {
   private ctx: AudioContext | null = null;
   public enabled = true;
-  /** Short vibrations on captures (phones only). */
-  public haptics = true;
 
   /** Must be called from a user gesture at least once so iOS unlocks audio. */
   public unlock(): void {
@@ -53,7 +51,6 @@ export class SoundEffects {
   }
 
   public playBoxCaptured(count = 1): void {
-    if (this.haptics) navigator.vibrate?.(count > 1 ? [12, 40, 12] : 12);
     if (!this.enabled) return;
     const ctx = this.init();
     if (!ctx) return;

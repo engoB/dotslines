@@ -19,7 +19,11 @@ export const ICONS = {
   play: svg('<path d="M8 5.5v13l10.5-6.5z"/>'),
   home: svg('<path d="M4 11l8-6.5 8 6.5M6 9.5V19h12V9.5M10 19v-5h4v5"/>'),
   redo: svg('<path d="M19 12a7 7 0 1 1-2.1-5M19 4.5V9h-4.5"/>'),
-  door: svg('<path d="M13 4H6v16h7M10 12h10M16.5 8.5L20 12l-3.5 3.5"/>')
+  door: svg('<path d="M13 4H6v16h7M10 12h10M16.5 8.5L20 12l-3.5 3.5"/>'),
+  bracket: svg('<path d="M3 5h5v5H3M3 14h5v5H3M8 7.5h3v9H8M11 12h4M15 9h6v6h-6z"/>'),
+  shuffle: svg('<path d="M3 7h3.5c4.5 0 6.5 10 11 10H21M3 17h3.5c1.8 0 3.1-1.6 4.2-3.5M13.3 9.5C14.4 8 15.7 7 17.5 7H21M18 4l3 3-3 3M18 14l3 3-3 3"/>'),
+  expand: svg('<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>'),
+  compress: svg('<path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/>')
 } as const;
 
 export type IconName = keyof typeof ICONS;

@@ -1,7 +1,8 @@
 import type { Player } from './board';
+import type { AILevel } from './ai';
 
 export type { Player };
-export type GameMode = 'ai-easy' | 'ai-medium' | 'ai-expert' | 'pvp' | 'p2p';
+export type GameMode = 'ai-easy' | 'ai-medium' | 'ai-expert' | 'pvp' | 'p2p' | 'tournament';
 
 export const isAIMode = (mode: GameMode): boolean => mode.startsWith('ai-');
 
@@ -12,6 +13,10 @@ export interface MatchConfig {
   starter: Player;
   /** P2P only: the player controlled on this device (host = 1, guest = 2). */
   localPlayer?: Player;
+  /** Players driven by the computer (any side, both for AI-vs-AI tournament matches). */
+  ai?: Partial<Record<Player, AILevel>>;
+  /** Initials written in captured boxes (default J1 / J2, IA for the computer). */
+  labels?: Record<Player, string>;
 }
 
 export interface ConfettiParticle {

@@ -1,17 +1,19 @@
-import type { GameMode, Player } from '../game/types';
+import type { AILevel } from '../game/ai';
+import type { Contestant } from '../game/Tournament';
+import type { Player } from '../game/types';
 
-export type PlayKind = 'solo' | 'local' | 'online';
+export type PlayKind = 'solo' | 'local' | 'tournament' | 'online';
 export type AILevelPref = 'easy' | 'medium' | 'expert';
-export type StarterPref = 'alternate' | 'me' | 'opponent';
+export type StarterPref = 'alternate' | 'random' | 'me' | 'opponent';
 
 export interface Prefs {
   kind: PlayKind;
   level: AILevelPref;
   size: number;
   sound: boolean;
-  haptics: boolean;
   starter: StarterPref;
-  showLastMove: boolean;
+  /** Last tournament line-up, kept for the next one. */
+  contestants: Contestant[];
 }
 
 export interface Record3 {
@@ -21,7 +23,8 @@ export interface Record3 {
 }
 
 /** Results from the point of view of this device (player 1 for local modes). */
-export type Stats = Record<'ai-easy' | 'ai-medium' | 'ai-expert' | 'pvp' | 'p2p', Record3>;
+export type StatsMode = 'ai-easy' | 'ai-medium' | 'ai-expert' | 'pvp' | 'p2p';
+export type Stats = Record<StatsMode, Record3>;
 
 const PREFS_KEY = 'dotslines.prefs.v2';
 const STATS_KEY = 'dotslines.stats.v1';
@@ -32,10 +35,25 @@ const DEFAULT_PREFS: Prefs = {
   level: 'expert',
   size: 4,
   sound: true,
-  haptics: true,
   starter: 'alternate',
-  showLastMove: true
+  contestants: [
+    { name: 'Joueur 1', ai: null },
+    { name: 'Joueur 2', ai: null },
+    { name: 'Joueur 3', ai: null },
+    { name: 'IA Expert', ai: 'expert' }
+  ]
 };
+
+const AI_LEVELS: (AILevel | null)[] = [null, 'easy', 'medium', 'expert'];
+
+function readContestants(raw: unknown): Contestant[] {
+  if (!Array.isArray(raw) || raw.length !== 4) return DEFAULT_PREFS.contestants.map((c) => ({ ...c }));
+  return raw.map((c, i) => {
+    const d = DEFAULT_PREFS.contestants[i];
+    const name = typeof c?.name === 'string' && c.name.trim() ? c.name.trim().slice(0, 14) : d.name;
+    return { name, ai: oneOf(c?.ai ?? null, AI_LEVELS, d.ai) };
+  });
+}
 
 function read<T>(key: string): Partial<T> {
   try {
@@ -62,13 +80,12 @@ export function loadPrefs(): Prefs {
   const bool = (v: unknown, d: boolean) => (typeof v === 'boolean' ? v : d);
   return {
     // An online session cannot survive a reload: come back on solo.
-    kind: oneOf(raw.kind, ['solo', 'local'] as const, DEFAULT_PREFS.kind),
+    kind: oneOf(raw.kind, ['solo', 'local', 'tournament'] as const, DEFAULT_PREFS.kind),
     level: oneOf(raw.level, ['easy', 'medium', 'expert'] as const, DEFAULT_PREFS.level),
     size: oneOf(raw.size, SIZES, DEFAULT_PREFS.size),
     sound: bool(raw.sound, DEFAULT_PREFS.sound),
-    haptics: bool(raw.haptics, DEFAULT_PREFS.haptics),
-    starter: oneOf(raw.starter, ['alternate', 'me', 'opponent'] as const, DEFAULT_PREFS.starter),
-    showLastMove: bool(raw.showLastMove, DEFAULT_PREFS.showLastMove)
+    starter: oneOf(raw.starter, ['alternate', 'random', 'me', 'opponent'] as const, DEFAULT_PREFS.starter),
+    contestants: readContestants(raw.contestants)
   };
 }
 
@@ -98,7 +115,7 @@ export function loadStats(): Stats {
   return stats;
 }
 
-export function recordResult(mode: GameMode, winner: 0 | Player, localPlayer: Player): Stats {
+export function recordResult(mode: StatsMode, winner: 0 | Player, localPlayer: Player): Stats {
   const stats = loadStats();
   const r = stats[mode];
   if (winner === 0) r.d++;

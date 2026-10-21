@@ -3,7 +3,7 @@ import { AIClient } from './AIClient';
 import type { AILevel } from './ai';
 import { SketchRenderer } from './SketchRenderer';
 import { SoundEffects } from './SoundEffects';
-import { isAIMode, type ConfettiParticle, type MatchConfig } from './types';
+import type { ConfettiParticle, MatchConfig } from './types';
 
 export type MoveSource = 'local' | 'ai' | 'remote';
 
@@ -18,10 +18,12 @@ export interface GameHooks {
 /** Minimum time the AI "thinks", so its line is readable (shorter while it chains captures). */
 const AI_MIN_DELAY_MS = 420;
 const AI_CHAIN_DELAY_MS = 230;
+/** Computer-vs-computer matches are watched at a brisker pace. */
+const AI_VS_AI_DELAY_MS = 170;
 const EDGE_ANIM_MS = 140;
 const BOX_ANIM_MS = 420;
 
-export const PLAYER_COLORS: Record<Player, string> = { 1: '#2a64cf', 2: '#d23c66' };
+export const PLAYER_COLORS: Record<Player, string> = { 1: '#2f6fdb', 2: '#e2574c' };
 
 export class DotsAndBoxesGame {
   private readonly canvas: HTMLCanvasElement;
@@ -32,8 +34,6 @@ export class DotsAndBoxesGame {
   public config: MatchConfig = { size: 4, mode: 'ai-expert', starter: 1 };
   public state = new BoardState(4);
   public aiThinking = false;
-  /** Marker under the last line played. */
-  public showLastMove = true;
   /** Bumped on every new match so late AI replies / timers from the old one are ignored. */
   private matchId = 0;
 
@@ -67,7 +67,8 @@ export class DotsAndBoxesGame {
   // ---- match flow ---------------------------------------------------------
 
   public get labels(): Record<Player, string> {
-    return { 1: 'J1', 2: isAIMode(this.config.mode) ? 'IA' : 'J2' };
+    const { labels, ai } = this.config;
+    return labels ?? { 1: ai?.[1] ? 'IA' : 'J1', 2: ai?.[2] ? 'IA' : 'J2' };
   }
 
   public get isGameOver(): boolean {
@@ -112,10 +113,9 @@ export class DotsAndBoxesGame {
 
   public canLocalPlayerAct(): boolean {
     if (this.state.isOver || this.aiThinking) return false;
-    const { mode, localPlayer } = this.config;
+    const { mode, localPlayer, ai } = this.config;
     if (mode === 'p2p') return this.state.currentPlayer === localPlayer;
-    if (isAIMode(mode)) return this.state.currentPlayer === 1;
-    return true;
+    return !ai?.[this.state.currentPlayer];
   }
 
   /** Applies a move from the other phone. Returns false when out of sync. */
@@ -148,10 +148,12 @@ export class DotsAndBoxesGame {
   }
 
   private maybeRunAI(): void {
-    if (!isAIMode(this.config.mode) || this.state.currentPlayer !== 2 || this.state.isOver) return;
-    const level = this.config.mode.slice(3) as AILevel;
+    const player = this.state.currentPlayer;
+    const level: AILevel | undefined = this.config.ai?.[player];
+    if (!level || this.state.isOver) return;
     const id = this.matchId;
-    const minDelay = this.lastSource === 'ai' ? AI_CHAIN_DELAY_MS : AI_MIN_DELAY_MS;
+    const bothAI = !!(this.config.ai?.[1] && this.config.ai?.[2]);
+    const minDelay = bothAI ? AI_VS_AI_DELAY_MS : this.lastSource === 'ai' ? AI_CHAIN_DELAY_MS : AI_MIN_DELAY_MS;
     const started = performance.now();
     this.aiThinking = true;
     this.hooks.onUpdate();
@@ -159,7 +161,7 @@ export class DotsAndBoxesGame {
     void this.ai.request(this.state.size, this.state.drawnMask(), level).then((move) => {
       const wait = Math.max(0, minDelay - (performance.now() - started));
       window.setTimeout(() => {
-        if (id !== this.matchId || this.state.isOver || this.state.currentPlayer !== 2) return;
+        if (id !== this.matchId || this.state.isOver || this.state.currentPlayer !== player) return;
         this.aiThinking = false;
         if (this.state.isFree(move)) this.playEdge(move, 'ai');
       }, wait);
@@ -344,7 +346,7 @@ export class DotsAndBoxesGame {
       );
     }
 
-    if (this.showLastMove && this.lastEdge >= 0 && edgeOwner[this.lastEdge] && !this.state.isOver) {
+    if (this.lastEdge >= 0 && edgeOwner[this.lastEdge] && !this.state.isOver) {
       const { x1, y1, x2, y2 } = this.edgeCoords(this.lastEdge);
       SketchRenderer.drawHighlight(ctx, x1, y1, x2, y2, PLAYER_COLORS[edgeOwner[this.lastEdge] as Player], 14 * scale);
     }
@@ -389,7 +391,7 @@ export class DotsAndBoxesGame {
 
   private spawnPaperConfetti(): void {
     if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
-    const palette = ['#2a64cf', '#d23c66', '#deb173', '#d6317f', '#4a2f1f'];
+    const palette = ['#2f6fdb', '#e2574c', '#14a38b', '#ffc93c', '#1f2a44'];
     for (let i = 0; i < 60; i++) {
       this.confetti.push({
         x: this.cssWidth / 2,

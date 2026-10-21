@@ -9,17 +9,17 @@ sur le même écran, ou **sur deux téléphones** en P2P (WebRTC, sans serveur d
 
 ## Interface
 
-Le plateau reste un **carnet de croquis** (papier quadrillé, traits au crayon), habillé d'une interface
-inspirée d'[Iro-Koku](https://github.com/engoB/IroKoku) (couleurs et polices uniquement, sans ses illustrations) :
-cartes parchemin à liseré doré, bouton gemme magenta, onglets « pilule », fanions de score bleu/rouge,
-gemme de tour au-dessus du plateau, feuilles coulissantes. Polices : Baloo 2, Nunito et Caveat (auto-hébergées).
+Le plateau reste un **carnet de croquis** (traits au crayon sur papier quadrillé). L'interface reprend
+l'organisation d'[Iro-Koku](https://github.com/engoB/IroKoku) (cartes, onglets, feuilles coulissantes) avec sa propre
+palette « carnet & post-it » : cahier à grille bleue, encre marine, cartes au trait avec ombre décalée, accents
+menthe et jaune post-it, rubans adhésifs. Polices : Baloo 2, Nunito et Caveat (auto-hébergées).
 
-- **Accueil** : plateau de démonstration qui se joue tout seul, choix du mode (Solo · À deux · En ligne),
-  difficulté et taille de grille, bouton *Jouer*, barre Règles · Stats · Réglages.
-- **Partie** : fanions de score, carte « Toi vs adversaire » avec le tour en cours, bandeau de messages
-  (« +2 carrés ! Tu rejoues. »), pause (reprendre, recommencer, accueil).
-- **Réglages** : sons, vibrations, marquage du dernier trait, qui commence (à tour de rôle / moi / l'adversaire),
-  installation, remise à zéro des statistiques.
+- **Accueil** : plateau de démonstration qui se joue tout seul, 4 modes (Solo · À deux · Tournoi · En ligne),
+  difficulté / joueurs et taille de grille, bouton *Jouer*, barre Règles · Stats · Réglages.
+- **Partie** : écran maximisé (plein écran automatique sur téléphone quand le navigateur le permet), cartes de score
+  avec bande de couleur, cadre du plateau à la couleur du joueur dont c'est le tour, bandeau de messages
+  (« +2 carrés ! Tu rejoues. »), pause (reprendre, recommencer, plein écran, accueil).
+- **Réglages** : sons et « qui commence » (chacun son tour, au hasard, moi, l'adversaire).
 - **Statistiques** : victoires / défaites / nuls par niveau d'IA, en ligne et à deux.
 
 ## Fonctionnalités
@@ -30,10 +30,14 @@ gemme de tour au-dessus du plateau, feuilles coulissantes. Polices : Baloo 2, Nu
 - **IA Expert** : en fin de partie, elle **résout exactement** la position (alpha-bêta + table de transposition,
   règles de capture/double-cross de Berlekamp et évaluation exacte des chaînes et boucles). Elle tourne dans un
   Web Worker pour ne jamais figer l'animation.
+- **Tournoi à 4** (sur un seul écran) : chaque joueur est humain ou IA (Facile / Malin / Expert),
+  demi-finales 1 contre 2 et 3 contre 4, puis finale entre les vainqueurs ; match rejoué en cas d'égalité,
+  tirage au sort de l'ordre, tableau du tournoi.
 - **2 joueurs (1 écran)** et **2 téléphones (P2P)** : code salon à 4 caractères, QR code généré localement,
   lien d'invitation `?room=XXXX`, revanche, reconnexion au même salon, salon limité à 2 téléphones.
-- Le premier joueur alterne à chaque manche (réglable) ; score des manches affiché.
-- PWA installable, polices auto-hébergées, 100 % hors-ligne (sauf la mise en relation P2P qui demande Internet).
+- Le premier joueur alterne à chaque manche ou est tiré au sort (réglable) ; score des manches affiché.
+- PWA installable, polices auto-hébergées, 100 % hors-ligne : Solo, À deux et Tournoi n'ont jamais besoin de réseau ;
+  seul le mode En ligne demande Internet, pour la mise en relation des deux téléphones.
 - Réglages mémorisés (mode, taille, son).
 
 ## Développement
@@ -81,6 +85,7 @@ src/
 │   ├── SketchRenderer.ts   # primitives « crayon sur papier »
 │   ├── SoundEffects.ts     # sons Web Audio
 │   ├── P2PManager.ts       # WebRTC via PeerJS
+│   ├── Tournament.ts       # tableau du tournoi à 4
 │   └── types.ts            # types + validation des messages P2P
 ├── ui/
 │   ├── DemoBoard.ts        # plateau de démo animé de l'accueil

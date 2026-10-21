@@ -10,16 +10,16 @@ const art = (inset) => {
   const a = inset;
   const b = 100 - inset;
   return `
-  <rect x="${a}" y="${a}" width="${b - a}" height="${b - a}" fill="#2b59c3" opacity="0.12"/>
-  <path d="M${a} ${a} L${b} ${a + 0.6} M${a + 0.4} ${a} L${a - 0.3} ${b}" stroke="#2b59c3" stroke-width="7" stroke-linecap="round" fill="none"/>
-  <path d="M${b} ${a} L${b + 0.4} ${b} M${a} ${b} L${b} ${b - 0.5}" stroke="#d1493f" stroke-width="7" stroke-linecap="round" fill="none"/>
-  <text x="50" y="${50 + (b - a) * 0.17}" font-family="Caveat, cursive" font-weight="700" font-size="${(b - a) * 0.62}" text-anchor="middle" fill="#2b59c3">J1</text>
-  ${[[a, a], [b, a], [a, b], [b, b]].map(([x, y]) => `<circle cx="${x}" cy="${y}" r="6.5" fill="#2c2623"/>`).join('')}`;
+  <rect x="${a}" y="${a}" width="${b - a}" height="${b - a}" fill="#2f6fdb" opacity="0.12"/>
+  <path d="M${a} ${a} L${b} ${a + 0.6} M${a + 0.4} ${a} L${a - 0.3} ${b}" stroke="#2f6fdb" stroke-width="7" stroke-linecap="round" fill="none"/>
+  <path d="M${b} ${a} L${b + 0.4} ${b} M${a} ${b} L${b} ${b - 0.5}" stroke="#e2574c" stroke-width="7" stroke-linecap="round" fill="none"/>
+  <text x="50" y="${50 + (b - a) * 0.17}" font-family="Caveat, cursive" font-weight="700" font-size="${(b - a) * 0.62}" text-anchor="middle" fill="#2f6fdb">J1</text>
+  ${[[a, a], [b, a], [a, b], [b, b]].map(([x, y]) => `<circle cx="${x}" cy="${y}" r="6.5" fill="#1f2a44"/>`).join('')}`;
 };
 
 const icon = ({ rounded, inset }) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%">
-  <rect width="100" height="100" ${rounded ? 'rx="20"' : ''} fill="#f9f6f0"/>
-  <g stroke="rgba(160,145,120,0.25)" stroke-width="0.6">
+  <rect width="100" height="100" ${rounded ? 'rx="20"' : ''} fill="#f6f2e9"/>
+  <g stroke="rgba(70,110,170,0.28)" stroke-width="0.6">
     ${Array.from({ length: 9 }, (_, i) => `<line x1="${(i + 1) * 10}" y1="0" x2="${(i + 1) * 10}" y2="100"/><line x1="0" y1="${(i + 1) * 10}" x2="100" y2="${(i + 1) * 10}"/>`).join('')}
   </g>
   ${art(inset)}
