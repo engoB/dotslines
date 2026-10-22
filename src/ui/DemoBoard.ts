@@ -1,6 +1,6 @@
 import { BoardState, edgeInfo } from '../game/board';
 import { PLAYER_COLORS } from '../game/DotsAndBoxesGame';
-import { SketchRenderer } from '../game/SketchRenderer';
+import { BOARD_FONT, BoardRenderer } from '../game/BoardRenderer';
 
 const SIZE = 3;
 const STEP_MS = 650;
@@ -8,8 +8,8 @@ const EDGE_MS = 260;
 const BOX_MS = 450;
 
 /**
- * Small self-playing sketch board for the home screen: two pencils play a
- * quick game, then the page is "turned" and a new one starts.
+ * Small self-playing board for the home screen: two players play a quick
+ * game, then a new one starts.
  */
 export class DemoBoard {
   private readonly ctx: CanvasRenderingContext2D;
@@ -28,7 +28,7 @@ export class DemoBoard {
     this.ctx = canvas.getContext('2d')!;
     new ResizeObserver(() => this.resize()).observe(canvas);
     document.addEventListener('visibilitychange', () => (document.hidden ? this.stop() : this.running && this.start()));
-    document.fonts?.load("700 32px 'Caveat'").then(() => this.draw(), () => {});
+    document.fonts?.load(`800 32px ${BOARD_FONT}`).then(() => this.draw(), () => {});
     if (this.reduced) this.prefill();
   }
 
@@ -127,19 +127,19 @@ export class DemoBoard {
     if (!w || !h) return;
     ctx.clearRect(0, 0, w, h);
     const side = Math.min(w, h);
-    const pad = side * 0.13;
+    const pad = side * 0.1;
     const cell = (side - pad * 2) / SIZE;
     const ox = (w - side) / 2 + pad;
     const oy = (h - side) / 2 + pad;
-    const scale = Math.max(0.6, Math.min(1.1, cell / 80));
+    const lineWidth = Math.max(4, cell * 0.095);
     const { geom, edgeOwner, boxOwner } = this.state;
 
     for (let b = 0; b < geom.boxCount; b++) {
       const owner = boxOwner[b] as 1 | 2 | 0;
-      if (!owner) continue;
       const x = ox + (b % SIZE) * cell;
       const y = oy + Math.floor(b / SIZE) * cell;
-      SketchRenderer.drawCapturedBox(ctx, x, y, cell, PLAYER_COLORS[owner], owner === 1 ? 'J1' : 'J2', this.boxAnim[b], 300 + b * 13);
+      if (!owner || this.boxAnim[b] < 1) BoardRenderer.cell(ctx, x, y, cell);
+      if (owner) BoardRenderer.box(ctx, x, y, cell, PLAYER_COLORS[owner], owner === 1 ? 'J1' : 'J2', this.boxAnim[b]);
     }
     for (let e = 0; e < geom.edgeCount; e++) {
       const owner = edgeOwner[e] as 1 | 2 | 0;
@@ -147,14 +147,11 @@ export class DemoBoard {
       const { dir, r, c } = edgeInfo(geom, e);
       const x1 = ox + c * cell;
       const y1 = oy + r * cell;
-      SketchRenderer.drawPencilLine(
-        ctx, x1, y1, dir === 'h' ? x1 + cell : x1, dir === 'v' ? y1 + cell : y1,
-        PLAYER_COLORS[owner], this.edgeAnim[e], 40 + e * 7, false, scale
-      );
+      BoardRenderer.line(ctx, x1, y1, dir === 'h' ? x1 + cell : x1, dir === 'v' ? y1 + cell : y1, PLAYER_COLORS[owner], lineWidth, this.edgeAnim[e]);
     }
     for (let r = 0; r <= SIZE; r++) {
       for (let c = 0; c <= SIZE; c++) {
-        SketchRenderer.drawSketchDot(ctx, ox + c * cell, oy + r * cell, Math.max(3.5, cell * 0.07), r * 17 + c * 31);
+        BoardRenderer.dot(ctx, ox + c * cell, oy + r * cell, Math.max(3.5, cell * 0.078));
       }
     }
   }

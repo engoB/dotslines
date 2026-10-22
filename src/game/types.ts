@@ -17,6 +17,10 @@ export interface MatchConfig {
   ai?: Partial<Record<Player, AILevel>>;
   /** Initials written in captured boxes (default J1 / J2, IA for the computer). */
   labels?: Record<Player, string>;
+  /** Seconds allowed per move (0 / undefined = no timer). */
+  turnSeconds?: number;
+  /** Sides played by a computer elsewhere (tournament host): never timed. */
+  untimed?: Player[];
 }
 
 export interface ConfettiParticle {
@@ -52,10 +56,10 @@ export interface MatchInfo {
 /** Messages exchanged over the WebRTC data channel. The host is authoritative. */
 export type P2PMessage =
   // Duel (2 phones)
-  | { type: 'START'; size: number; starter: Player }
+  | { type: 'START'; size: number; starter: Player; timer: number }
   | { type: 'MOVE'; edge: number; seq: number }
   | { type: 'SYNC_REQUEST' }
-  | { type: 'SYNC'; size: number; starter: Player; moves: number[] }
+  | { type: 'SYNC'; size: number; starter: Player; moves: number[]; timer: number }
   | { type: 'REMATCH' }
   // Room management
   | { type: 'WELCOME'; kind: 'duel' | 'tournament' }
@@ -63,8 +67,8 @@ export type P2PMessage =
   | { type: 'BYE' }
   // Tournament (4 phones)
   | { type: 'NAME'; name: string }
-  | { type: 'LOBBY'; size: number; you: number; seats: SeatInfo[] }
-  | { type: 'T_SYNC'; size: number; you: number; seats: SeatInfo[]; matches: MatchInfo[] }
+  | { type: 'LOBBY'; size: number; you: number; seats: SeatInfo[]; timer: number }
+  | { type: 'T_SYNC'; size: number; you: number; seats: SeatInfo[]; matches: MatchInfo[]; timer: number }
   | { type: 'T_MOVE'; m: number; edge: number; seq: number }
   | { type: 'INFO'; text: string };
 
@@ -74,6 +78,8 @@ const isSize = (v: unknown): v is number => isInt(v) && v >= 2 && v <= 8;
 const isSeat = (v: unknown): v is number => isInt(v) && v >= 0 && v < 4;
 const isText = (v: unknown, max: number): v is string => typeof v === 'string' && v.length <= max;
 const isMoves = (v: unknown): v is number[] => Array.isArray(v) && v.length <= 200 && v.every(isInt);
+/** Seconds per move; absent (older app version) means no timer. */
+const timerOf = (v: unknown): number => (isInt(v) && v >= 0 && v <= 120 ? v : 0);
 
 function parseSeats(v: unknown): SeatInfo[] | null {
   if (!Array.isArray(v) || v.length !== 4) return null;
@@ -117,12 +123,14 @@ export function parseP2PMessage(raw: unknown): P2PMessage | null {
   const m = raw as Record<string, unknown>;
   switch (m.type) {
     case 'START':
-      return isSize(m.size) && isPlayer(m.starter) ? { type: 'START', size: m.size, starter: m.starter } : null;
+      return isSize(m.size) && isPlayer(m.starter)
+        ? { type: 'START', size: m.size, starter: m.starter, timer: timerOf(m.timer) }
+        : null;
     case 'MOVE':
       return isInt(m.edge) && isInt(m.seq) ? { type: 'MOVE', edge: m.edge, seq: m.seq } : null;
     case 'SYNC':
       return isSize(m.size) && isPlayer(m.starter) && isMoves(m.moves)
-        ? { type: 'SYNC', size: m.size, starter: m.starter, moves: m.moves }
+        ? { type: 'SYNC', size: m.size, starter: m.starter, moves: m.moves, timer: timerOf(m.timer) }
         : null;
     case 'WELCOME':
       return m.kind === 'duel' || m.kind === 'tournament' ? { type: 'WELCOME', kind: m.kind } : null;
@@ -130,13 +138,15 @@ export function parseP2PMessage(raw: unknown): P2PMessage | null {
       return isText(m.name, 24) ? { type: 'NAME', name: m.name } : null;
     case 'LOBBY': {
       const seats = parseSeats(m.seats);
-      return seats && isSize(m.size) && isSeat(m.you) ? { type: 'LOBBY', size: m.size, you: m.you, seats } : null;
+      return seats && isSize(m.size) && isSeat(m.you)
+        ? { type: 'LOBBY', size: m.size, you: m.you, seats, timer: timerOf(m.timer) }
+        : null;
     }
     case 'T_SYNC': {
       const seats = parseSeats(m.seats);
       const matches = parseMatches(m.matches);
       return seats && matches && isSize(m.size) && isSeat(m.you)
-        ? { type: 'T_SYNC', size: m.size, you: m.you, seats, matches }
+        ? { type: 'T_SYNC', size: m.size, you: m.you, seats, matches, timer: timerOf(m.timer) }
         : null;
     }
     case 'T_MOVE':

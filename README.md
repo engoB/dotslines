@@ -9,18 +9,21 @@ sur le même écran, ou **sur deux téléphones** en P2P (WebRTC, sans serveur d
 
 ## Interface
 
-Le plateau reste un **carnet de croquis** (traits au crayon sur papier quadrillé). L'interface reprend
-l'organisation d'[Iro-Koku](https://github.com/engoB/IroKoku) (cartes, onglets, feuilles coulissantes) avec sa propre
-palette « carnet & post-it » : cahier à grille bleue, encre marine, cartes au trait avec ombre décalée, accents
-menthe et jaune post-it, rubans adhésifs. Polices : Baloo 2, Nunito et Caveat (auto-hébergées).
+Style « console de salon » : fond clair, panneaux blancs arrondis, couleurs vives (bleu et rouge néon),
+boutons en relief qui s'enfoncent, curseur de sélection cyan animé, police arrondie (M PLUS Rounded 1c + Nunito,
+auto-hébergées). Plateau net : traits droits avec une légère ombre, pions ronds, cases capturées en tuiles pleines
+qui « poppent ».
 
 - **Accueil** : plateau de démonstration qui se joue tout seul, 4 modes (Solo · À deux · En ligne · Tournoi),
-  difficulté et taille de grille, bouton *Jouer*, barre Règles · Stats · Réglages.
+  difficulté, taille de grille, **chrono**, bouton *Jouer*, barre Règles · Stats · Réglages.
 - **Partie** : écran maximisé (plein écran automatique sur téléphone quand le navigateur le permet), cartes de score
-  avec bande de couleur, cadre du plateau à la couleur du joueur dont c'est le tour, bandeau de messages
-  (« +2 carrés ! Tu rejoues. »), pause (reprendre, recommencer, plein écran, accueil).
+  (pleine couleur pour le joueur dont c'est le tour), cadre du plateau à sa couleur, **dernier tour de l'adversaire
+  surligné** (halo qui pulse, puis reste visible jusqu'à ton coup), bandeau de messages, pause.
+- **Chrono par coup (option, tous les modes)** : Off, 5, 10 ou 20 s par trait. Barre de temps à la couleur du joueur,
+  rouge et bips dans les 3 dernières secondes ; à zéro, un trait est tracé au hasard. En solo / à deux le chrono se met
+  en pause avec le jeu ; en ligne c'est le réglage de l'hôte qui s'applique et le chrono ne s'arrête pas.
 - **Réglages** : sons et « qui commence » (chacun son tour, au hasard, moi, l'adversaire).
-- **Statistiques** : victoires / défaites / nuls par niveau d'IA, en ligne et à deux.
+- **Statistiques** : victoires / défaites / nuls par niveau d'IA, en ligne, tournois et à deux.
 
 ## Fonctionnalités
 
@@ -84,7 +87,7 @@ src/
 │   ├── ai.worker.ts        # IA dans un Web Worker
 │   ├── AIClient.ts         # pont worker ↔ jeu (repli sur le thread principal)
 │   ├── DotsAndBoxesGame.ts # rendu Canvas, saisie, déroulé des manches
-│   ├── SketchRenderer.ts   # primitives « crayon sur papier »
+│   ├── BoardRenderer.ts    # dessin du plateau (traits, pions, tuiles, halo)
 │   ├── SoundEffects.ts     # sons Web Audio
 │   ├── P2PManager.ts       # WebRTC via PeerJS
 │   ├── Tournament.ts       # tableau du tournoi à 4

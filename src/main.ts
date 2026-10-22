@@ -1,10 +1,8 @@
-import '@fontsource/baloo-2/latin-600.css';
-import '@fontsource/baloo-2/latin-700.css';
-import '@fontsource/baloo-2/latin-800.css';
+import '@fontsource/m-plus-rounded-1c/latin-700.css';
+import '@fontsource/m-plus-rounded-1c/latin-800.css';
 import '@fontsource/nunito/latin-600.css';
 import '@fontsource/nunito/latin-700.css';
 import '@fontsource/nunito/latin-800.css';
-import '@fontsource/caveat/latin-700.css';
 import './style.css';
 import { initPWA } from './pwa';
 import type { AILevel } from './game/ai';
@@ -38,6 +36,7 @@ const LEVEL_NAMES: Record<AILevelPref, string> = { easy: 'Facile', medium: 'Mali
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const plural = (n: number, word: string) => `${n} ${word}${n > 1 ? 's' : ''}`;
 const sizeLabel = (n: number) => `${n} × ${n}`;
+const timerLabel = (s: number) => (s ? ` · chrono ${s} s par trait` : '');
 const escapeHTML = (s: string) =>
   s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
@@ -78,6 +77,7 @@ let currentView: View = 'home';
 
 function showView(view: View): void {
   currentView = view;
+  window.setTimeout(syncPause);
   for (const [name, el] of Object.entries(views)) el.classList.toggle('hidden', name !== view);
   if (view === 'home') {
     setFullscreen(false);
@@ -95,6 +95,7 @@ function openOverlay(id: string): void {
   openPanel = $(id);
   openPanel.hidden = false;
   scrim.hidden = false;
+  syncPause();
   openPanel.querySelector<HTMLElement>('[data-close], .btn')?.focus({ preventScroll: true });
 }
 
@@ -105,6 +106,7 @@ function closeOverlay(switching = false): void {
   openPanel = null;
   closing.hidden = true;
   scrim.hidden = true;
+  syncPause();
   if (switching || closing.id !== 'sheet-online') return;
   // Closing the online sheet before a game started leaves the room.
   if (onlineKind === 'tournament' && !tClient.started) leaveTournament();
@@ -129,8 +131,34 @@ let tallyKey = '';
 const game = new DotsAndBoxesGame($<HTMLCanvasElement>('game-canvas'), {
   onUpdate: updateHUD,
   onMove: handleMove,
-  onGameOver: showGameOver
+  onGameOver: showGameOver,
+  onTimer: updateTimer
 });
+
+/** The turn timer stops in local games while the game is not in front of the player. */
+const localMode = () => game.config.mode === 'pvp' || isAIMode(game.config.mode);
+function syncPause(): void {
+  const away = currentView !== 'game' || openPanel?.id === 'sheet-pause' || document.hidden;
+  game.setPaused(localMode() && away);
+}
+document.addEventListener('visibilitychange', syncPause);
+
+const timerBar = $('timer-bar');
+let lastTickSecond = -1;
+function updateTimer(remaining: number, total: number, player: Player): void {
+  const timed = !!game.config.turnSeconds && !game.isGameOver;
+  timerBar.classList.toggle('hidden-el', !timed);
+  if (!timed) return;
+  const idle = total === 0; // computer's turn: no clock
+  const seconds = Math.ceil(remaining / 1000);
+  timerBar.className = `timer-bar p${player}${idle ? ' idle' : ''}${!idle && remaining <= 3000 ? ' danger' : ''}`;
+  $('timer-fill').style.width = idle ? '100%' : `${(remaining / total) * 100}%`;
+  $('timer-text').textContent = idle ? '⏱' : `⏱ ${seconds} s`;
+  if (!idle && remaining > 0 && seconds <= 3 && seconds !== lastTickSecond && game.canLocalPlayerAct()) {
+    game.sfx.playTick(seconds === 1);
+  }
+  lastTickSecond = seconds;
+}
 game.sfx.enabled = prefs.sound;
 
 function currentMode(): GameMode {
@@ -220,13 +248,16 @@ function updateHUD(): void {
     $(`status-p${p}`).textContent = status;
   }
   shownScores = { ...state.scores };
+  if (over) timerBar.classList.add('hidden-el');
   $('board-frame').className = `board-frame ${over ? 'over' : `p${state.currentPlayer}`}`;
 }
 
 function handleMove(edge: number, source: MoveSource, seq: number, captured: number): void {
-  if (source === 'local' && game.config.mode === 'p2p') p2p.send({ type: 'MOVE', edge, seq });
-  if (source === 'local' && game.config.mode === 'tournament') sendTournamentMove(edge, seq);
+  const mine = source === 'local' || source === 'timeout';
+  if (mine && game.config.mode === 'p2p') p2p.send({ type: 'MOVE', edge, seq });
+  if (mine && game.config.mode === 'tournament') sendTournamentMove(edge, seq);
   if (game.isGameOver) return setMessage('Partie terminée !', true);
+  if (source === 'timeout') return setMessage('⏱ Temps écoulé : trait tracé au hasard !', true);
   if (captured === 0) return setMessage(turnMessage());
   const p = game.state.currentPlayer;
   const boxes = plural(captured, 'carré');
@@ -309,7 +340,7 @@ function beginMatch(intro?: string): void {
 function startLocalMatch(mode: GameMode = currentMode(), size: number = prefs.size): void {
   const key = `${mode}:${size}`;
   resetTallyIfNeeded(key);
-  const config: MatchConfig = { size, mode, starter: pickStarter(key) };
+  const config: MatchConfig = { size, mode, starter: pickStarter(key), turnSeconds: prefs.turnTimer };
   if (isAIMode(mode)) config.ai = { 2: mode.slice(3) as AILevel };
   game.start(config);
   beginMatch();
@@ -415,6 +446,7 @@ function startHosting(): void {
     resetTournamentState();
     void p2p.host(3, 'En attente des joueurs…');
     tHost = new TournamentHost(prefs.playerName, prefs.size, tournamentIO, aiClient);
+    tHost.timer = prefs.turnTimer;
     tHost.broadcastSync();
   } else {
     void p2p.host(1);
@@ -525,8 +557,8 @@ window.addEventListener('online', () => {
 function startP2PRound(): void {
   if (p2p.role !== 'host' || !p2p.isConnected) return;
   const starter = pickStarter('p2p', prefs.starter === 'random' ? 'random' : 'alternate');
-  game.start({ size: prefs.size, mode: 'p2p', starter, localPlayer: 1 });
-  p2p.send({ type: 'START', size: prefs.size, starter });
+  game.start({ size: prefs.size, mode: 'p2p', starter, localPlayer: 1, turnSeconds: prefs.turnTimer });
+  p2p.send({ type: 'START', size: prefs.size, starter, timer: prefs.turnTimer });
   beginMatch();
 }
 
@@ -534,7 +566,7 @@ function handleP2PMessage(msg: P2PMessage): void {
   switch (msg.type) {
     case 'START':
       if (p2p.role !== 'guest') return;
-      game.start({ size: msg.size, mode: 'p2p', starter: msg.starter, localPlayer: 2 });
+      game.start({ size: msg.size, mode: 'p2p', starter: msg.starter, localPlayer: 2, turnSeconds: msg.timer });
       beginMatch();
       break;
     case 'MOVE':
@@ -550,7 +582,7 @@ function handleP2PMessage(msg: P2PMessage): void {
       break;
     case 'SYNC':
       if (p2p.role !== 'guest') return;
-      game.start({ size: msg.size, mode: 'p2p', starter: msg.starter, localPlayer: 2 }, msg.moves);
+      game.start({ size: msg.size, mode: 'p2p', starter: msg.starter, localPlayer: 2, turnSeconds: msg.timer }, msg.moves);
       if (!game.isGameOver) beginMatch();
       break;
     case 'REMATCH':
@@ -563,7 +595,8 @@ function handleP2PMessage(msg: P2PMessage): void {
 
 function sendSync(): void {
   if (game.config.mode !== 'p2p') return;
-  p2p.send({ type: 'SYNC', size: game.config.size, starter: game.config.starter, moves: [...game.state.moves] });
+  const { size, starter, turnSeconds } = game.config;
+  p2p.send({ type: 'SYNC', size, starter, moves: [...game.state.moves], timer: turnSeconds ?? 0 });
 }
 
 // ---- online: tournament (4 phones) ------------------------------------------------
@@ -683,8 +716,17 @@ function enterMatch(m: number, spectate: boolean): void {
   const side = spectate ? null : tClient.sideOf(m);
   const a = tClient.name(match.a);
   const b = tClient.name(match.b);
+  const untimed = ([1, 2] as const).filter((p) => tClient.isAI(p === 1 ? match.a : match.b));
   game.start(
-    { size: tClient.size, mode: 'tournament', starter: match.starter, localPlayer: side ?? undefined, labels: { 1: initials(a), 2: initials(b) } },
+    {
+      size: tClient.size,
+      mode: 'tournament',
+      starter: match.starter,
+      localPlayer: side ?? undefined,
+      labels: { 1: initials(a), 2: initials(b) },
+      turnSeconds: tClient.timer,
+      untimed
+    },
     [...match.board.moves]
   );
   beginMatch(`${ROUND_NAMES[m]} : ${a} contre ${b}${side ? '' : ' (en spectateur)'}`);
@@ -711,7 +753,7 @@ function showTournamentResult(): void {
 
   let title: string;
   if (winnerSeat === null) title = 'Égalité ! Le match va être rejoué 🤝';
-  else if (m === 2) title = meWon ? '🏆 Tu remportes le tournoi !' : `🏆 ${winnerName} remporte le tournoi !`;
+  else if (m === 2) title = meWon ? '🏆 Tu remportes le tournoi\u00a0!' : `🏆 ${winnerName} remporte le tournoi\u00a0!`;
   else title = meWon ? 'Tu es en finale ! 🎉' : `${winnerName} passe en finale !`;
   if (meWon) game.sfx.playVictory();
 
@@ -754,8 +796,8 @@ function renderLobby(): void {
   $('lobby-hint').textContent = host
     ? open
       ? `Encore ${plural(open, 'place')} : partage le code, ou touche une place pour y mettre une IA.`
-      : `Tout le monde est là · grille ${sizeLabel(tClient.size)}. C'est parti ?`
-    : `Grille ${sizeLabel(tClient.size)} · l'hôte lance le tournoi quand les 4 places sont prises.`;
+      : `Tout le monde est là · grille ${sizeLabel(tClient.size)}${timerLabel(tClient.timer)}. C'est parti ?`
+    : `Grille ${sizeLabel(tClient.size)}${timerLabel(tClient.timer)} · l'hôte lance le tournoi quand les 4 places sont prises.`;
   const nameInput = $<HTMLInputElement>('my-name');
   if (document.activeElement !== nameInput) nameInput.value = prefs.playerName;
 }
@@ -815,7 +857,7 @@ function renderBracket(): void {
   $('bracket-champion').classList.toggle('hidden-el', champion === null);
   if (champion !== null) {
     const who = champion === you ? 'Tu remportes' : `<span>${escapeHTML(tClient.name(champion))}</span> remporte`;
-    $('bracket-champion').innerHTML = `🏆 ${who} le tournoi !`;
+    $('bracket-champion').innerHTML = `🏆 ${who} le tournoi\u00a0!`;
   }
   const next = $<HTMLButtonElement>('btn-next-match');
   const mine = tClient.myLiveMatch;
@@ -860,6 +902,7 @@ $('btn-leave-tournament').addEventListener('click', () => {
 const tiles = document.querySelectorAll<HTMLButtonElement>('.tile');
 const levelButtons = document.querySelectorAll<HTMLButtonElement>('#level-select button');
 const sizeButtons = document.querySelectorAll<HTMLButtonElement>('#size-select button');
+const timerButtons = document.querySelectorAll<HTMLButtonElement>('#timer-select button');
 
 /** Where "Reprendre" leads, if anywhere. */
 function resumeTarget(): View | null {
@@ -877,9 +920,10 @@ function refreshHome(): void {
   });
   levelButtons.forEach((b) => b.classList.toggle('on', b.dataset.level === prefs.level));
   sizeButtons.forEach((b) => b.classList.toggle('on', Number(b.dataset.size) === prefs.size));
+  timerButtons.forEach((b) => b.classList.toggle('on', Number(b.dataset.timer) === prefs.turnTimer));
   $('row-level').classList.toggle('hidden-el', prefs.kind !== 'solo');
 
-  const size = `grille ${sizeLabel(prefs.size)}`;
+  const size = `grille ${sizeLabel(prefs.size)}${prefs.turnTimer ? ` · ⏱ ${prefs.turnTimer} s` : ''}`;
   const titles: Record<PlayKind, [string, string]> = {
     solo: ['Jouer', `IA ${LEVEL_NAMES[prefs.level]} · ${size}`],
     local: ['Jouer', `À deux sur cet écran · ${size}`],
@@ -907,6 +951,12 @@ sizeButtons.forEach((b) =>
   b.addEventListener('click', () => {
     setPrefs({ size: Number(b.dataset.size) });
     tHost?.setSize(prefs.size);
+  })
+);
+timerButtons.forEach((b) =>
+  b.addEventListener('click', () => {
+    setPrefs({ turnTimer: Number(b.dataset.timer) });
+    tHost?.setTimer(prefs.turnTimer);
   })
 );
 
@@ -1026,7 +1076,8 @@ $('btn-pause').addEventListener('click', () => {
   if (mode === 'tournament') label = `Tournoi · ${ROUND_NAMES[Math.max(0, shownMatch)]}`;
   else if (mode === 'p2p') label = `En ligne · salon ${p2p.roomCode}`;
   else label = isAIMode(mode) ? playerNames()[2] : 'À deux';
-  $('pause-info').textContent = `${label} · grille ${sizeLabel(size)}`;
+  const clock = game.config.turnSeconds ? (localMode() ? ' · chrono en pause' : ' · le chrono continue en ligne') : '';
+  $('pause-info').textContent = `${label} · grille ${sizeLabel(size)}${clock}`;
   $('restart-label').textContent =
     mode === 'p2p' ? (p2p.role === 'guest' ? 'Proposer une nouvelle manche' : 'Nouvelle manche') : mode === 'tournament' ? 'Tableau du tournoi' : 'Recommencer';
   $('home-label').textContent = mode === 'p2p' ? 'Quitter le salon' : mode === 'tournament' ? 'Quitter le tournoi' : 'Accueil';
