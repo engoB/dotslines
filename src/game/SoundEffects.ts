@@ -54,7 +54,6 @@ export class SoundEffects {
     if (!this.enabled) return;
     const ctx = this.init();
     if (!ctx) return;
-    navigator.vibrate?.(count > 1 ? [12, 40, 12] : 12);
 
     const notes = count > 1 ? [523.25, 659.25, 783.99] : [440, 587.33];
     notes.forEach((freq, idx) => {

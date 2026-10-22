@@ -21,3 +21,29 @@ describe('P2P message validation', () => {
     expect(parseP2PMessage({ type: 'HACK' })).toBeNull();
   });
 });
+
+describe('tournament messages', () => {
+  const seats = [
+    { name: 'Ana', kind: 'host' },
+    { name: 'Bob', kind: 'phone' },
+    { name: 'IA Malin', kind: 'ai' },
+    { name: '', kind: 'open' }
+  ];
+  const match = { a: 0, b: 1, winner: null, score: null, replays: 0, starter: 1, moves: [3, 4] };
+  const tbd = { a: null, b: null, winner: null, score: null, replays: 0, starter: 2, moves: null };
+
+  it('accepts a full tournament sync', () => {
+    const msg = { type: 'T_SYNC', size: 4, you: 1, seats, matches: [match, { ...match, a: 2, b: 3 }, tbd] };
+    expect(parseP2PMessage(msg)).toEqual(msg);
+    expect(parseP2PMessage({ type: 'T_MOVE', m: 2, edge: 5, seq: 0 })).toEqual({ type: 'T_MOVE', m: 2, edge: 5, seq: 0 });
+  });
+
+  it('rejects malformed tournament data', () => {
+    expect(parseP2PMessage({ type: 'LOBBY', size: 4, you: 7, seats })).toBeNull();
+    expect(parseP2PMessage({ type: 'LOBBY', size: 4, you: 0, seats: seats.slice(0, 3) })).toBeNull();
+    expect(parseP2PMessage({ type: 'LOBBY', size: 4, you: 0, seats: [...seats.slice(0, 3), { name: 'x', kind: 'root' }] })).toBeNull();
+    expect(parseP2PMessage({ type: 'T_MOVE', m: 3, edge: 5, seq: 0 })).toBeNull();
+    expect(parseP2PMessage({ type: 'NAME', name: 'x'.repeat(200) })).toBeNull();
+    expect(parseP2PMessage({ type: 'T_SYNC', size: 4, you: 0, seats, matches: [match, match] })).toBeNull();
+  });
+});

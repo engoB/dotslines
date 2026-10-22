@@ -8,10 +8,11 @@ export interface P2PCallbacks {
   onStatus: (text: string, kind: 'info' | 'ok' | 'error') => void;
   /** Host only: the room code is registered and can be shared. */
   onRoomReady: (code: string) => void;
-  onConnected: (role: P2PRole) => void;
-  onMessage: (msg: P2PMessage) => void;
-  /** The other phone left or the link dropped (never fired for our own leave()). */
-  onDisconnected: (reason: string) => void;
+  /** A data channel opened (host: a guest arrived, guest: reached the host). */
+  onConnected: (role: P2PRole, peerId: string) => void;
+  onMessage: (msg: P2PMessage, peerId: string) => void;
+  /** A phone left or the link dropped (never fired for our own leave()). */
+  onDisconnected: (reason: string, peerId: string) => void;
 }
 
 const PREFIX = 'petits-carres-pwa-';
@@ -21,7 +22,7 @@ const JOIN_TIMEOUT_MS = 15000;
 function errorMessage(type: string | undefined, role: P2PRole): string {
   switch (type) {
     case 'peer-unavailable':
-      return 'Salon introuvable. Vérifie le code à 4 caractères (le Téléphone 1 doit garder l’écran ouvert).';
+      return 'Salon introuvable. Vérifie le code à 4 caractères (l’hôte doit garder l’écran ouvert).';
     case 'browser-incompatible':
       return 'Ce navigateur ne gère pas WebRTC. Essaie Chrome, Safari ou Firefox récent.';
     case 'network':
@@ -37,14 +38,20 @@ function errorMessage(type: string | undefined, role: P2PRole): string {
 }
 
 /**
- * Serverless 2-phone play: PeerJS only brokers the WebRTC handshake, then the
- * moves travel directly between the phones over a data channel.
+ * Serverless multi-phone play: PeerJS only brokers the WebRTC handshake, then
+ * messages travel directly between the phones. The host accepts up to
+ * `maxPeers` guests (1 for a duel, 3 for a tournament) and relays everything.
  */
 export class P2PManager {
   public roomCode = '';
   public role: P2PRole | null = null;
   private peer: Peer | null = null;
-  private conn: DataConnection | null = null;
+  /** Host: one connection per guest. Guest: the single link to the host. */
+  private readonly conns = new Map<string, DataConnection>();
+  private maxPeers = 1;
+  private waitingText = 'En attente du Téléphone 2…';
+  /** Host stops accepting newcomers (tournament started). */
+  private locked = false;
   private joinTimer: number | undefined;
   /** Incremented on every new session so stale PeerJS events are ignored. */
   private session = 0;
@@ -52,11 +59,22 @@ export class P2PManager {
   constructor(private readonly cb: P2PCallbacks) {}
 
   get isConnected(): boolean {
-    return !!this.conn?.open;
+    return this.peerCount > 0;
+  }
+
+  get peerCount(): number {
+    let n = 0;
+    for (const c of this.conns.values()) if (c.open) n++;
+    return n;
   }
 
   get isActive(): boolean {
     return this.peer !== null;
+  }
+
+  /** Host: refuse (or accept again) new phones. */
+  public setLocked(locked: boolean): void {
+    this.locked = locked;
   }
 
   private static generateCode(): string {
@@ -87,38 +105,42 @@ export class P2PManager {
   public cleanup(): void {
     this.session++;
     window.clearTimeout(this.joinTimer);
-    const conn = this.conn;
+    const conns = [...this.conns.values()];
     const peer = this.peer;
-    this.conn = null;
+    this.conns.clear();
     this.peer = null;
     this.role = null;
     this.roomCode = '';
-    conn?.close();
+    this.locked = false;
+    conns.forEach((c) => c.close());
     peer?.destroy();
   }
 
-  /** Politely tells the other phone we leave, then cleans up. */
+  /** Politely tells the other phones we leave, then cleans up. */
   public leave(): void {
-    if (this.isConnected) this.send({ type: 'BYE' });
-    // Give the BYE a moment to go out before tearing the channel down.
-    const conn = this.conn;
+    this.send({ type: 'BYE' });
+    const conns = [...this.conns.values()];
     const peer = this.peer;
     this.session++;
-    this.conn = null;
+    this.conns.clear();
     this.peer = null;
     this.role = null;
     this.roomCode = '';
+    this.locked = false;
     window.clearTimeout(this.joinTimer);
+    // Give the BYE a moment to go out before tearing the channels down.
     window.setTimeout(() => {
-      conn?.close();
+      conns.forEach((c) => c.close());
       peer?.destroy();
     }, 150);
   }
 
-  public async host(attempt = 0): Promise<void> {
+  public async host(maxPeers = 1, waitingText = 'En attente du Téléphone 2…', attempt = 0): Promise<void> {
     this.cleanup();
     const session = this.session;
     this.role = 'host';
+    this.maxPeers = maxPeers;
+    this.waitingText = waitingText;
     this.roomCode = P2PManager.generateCode();
     this.cb.onStatus('Création du salon sur le réseau…', 'info');
 
@@ -142,26 +164,26 @@ export class P2PManager {
       registered = true;
       reconnects = 0;
       this.cb.onRoomReady(this.roomCode);
-      this.cb.onStatus('En attente du Téléphone 2…', 'info');
+      this.cb.onStatus(this.waitingText, 'info');
     });
 
     peer.on('connection', (incoming) => {
       if (session !== this.session) return;
-      if (this.isConnected) {
-        // Only two players per room.
+      if (this.locked || this.peerCount >= this.maxPeers) {
+        // Room full or game already running.
         incoming.on('open', () => {
           incoming.send({ type: 'FULL' } satisfies P2PMessage);
           window.setTimeout(() => incoming.close(), 300);
         });
         return;
       }
-      this.conn?.close();
-      this.conn = incoming;
+      this.conns.get(incoming.peer)?.close();
+      this.conns.set(incoming.peer, incoming);
       this.wireConnection(incoming, session);
     });
 
     peer.on('disconnected', () => {
-      // Lost the signalling server only: the data channel survives, so try to
+      // Lost the signalling server only: the data channels survive, so try to
       // re-register the room a few times (never when it never came up at all).
       if (session !== this.session || peer.destroyed || !registered || reconnects >= 3) return;
       reconnects++;
@@ -173,9 +195,11 @@ export class P2PManager {
     peer.on('error', (err) => {
       if (session !== this.session) return;
       if (err.type === 'unavailable-id' && attempt < 3) {
-        void this.host(attempt + 1);
+        void this.host(maxPeers, waitingText, attempt + 1);
         return;
       }
+      // A guest's own channel failing must not look like the room failing.
+      if (err.type === 'peer-unavailable' && registered) return;
       this.cb.onStatus(errorMessage(err.type, 'host'), 'error');
     });
   }
@@ -185,7 +209,7 @@ export class P2PManager {
     const session = this.session;
     this.role = 'guest';
     this.roomCode = rawCode.trim().toUpperCase();
-    this.cb.onStatus('Connexion au Téléphone 1 en cours…', 'info');
+    this.cb.onStatus('Connexion au salon en cours…', 'info');
 
     let peer: Peer;
     try {
@@ -202,14 +226,14 @@ export class P2PManager {
 
     this.joinTimer = window.setTimeout(() => {
       if (session !== this.session || this.isConnected) return;
-      this.cb.onStatus('Pas de réponse du Téléphone 1. Vérifie le code et réessaie.', 'error');
+      this.cb.onStatus('Pas de réponse de l’hôte. Vérifie le code et réessaie.', 'error');
       this.cleanup();
     }, JOIN_TIMEOUT_MS);
 
     peer.on('open', () => {
       if (session !== this.session) return;
       const conn = peer.connect(PREFIX + this.roomCode, { reliable: true });
-      this.conn = conn;
+      this.conns.set(conn.peer, conn);
       this.wireConnection(conn, session);
     });
 
@@ -224,8 +248,8 @@ export class P2PManager {
     conn.on('open', () => {
       if (session !== this.session) return;
       window.clearTimeout(this.joinTimer);
-      this.cb.onStatus(`Connecté au salon ${this.roomCode} ✔`, 'ok');
-      this.cb.onConnected(this.role!);
+      if (this.role === 'guest') this.cb.onStatus(`Connecté au salon ${this.roomCode} ✔`, 'ok');
+      this.cb.onConnected(this.role!, conn.peer);
     });
 
     conn.on('data', (raw) => {
@@ -233,42 +257,49 @@ export class P2PManager {
       const msg = parseP2PMessage(raw);
       if (!msg) return;
       if (msg.type === 'BYE') {
-        this.dropConnection(conn, 'L’autre téléphone a quitté la partie.');
+        const who = this.role === 'host' ? 'Un téléphone a quitté le salon.' : 'L’hôte a quitté la partie.';
+        this.dropConnection(conn, this.maxPeers > 1 || this.role === 'guest' ? who : 'L’autre téléphone a quitté la partie.');
         return;
       }
       if (msg.type === 'FULL') {
-        this.cb.onStatus('Ce salon est déjà complet.', 'error');
+        this.cb.onStatus('Ce salon est complet ou la partie a déjà commencé.', 'error');
         this.cleanup();
         return;
       }
-      this.cb.onMessage(msg);
+      this.cb.onMessage(msg, conn.peer);
     });
 
     conn.on('close', () => {
       if (session !== this.session) return;
-      this.dropConnection(conn, 'Le second téléphone s’est déconnecté.');
+      this.dropConnection(conn, this.role === 'host' ? 'Un téléphone s’est déconnecté.' : 'La connexion avec l’hôte a été perdue.');
     });
 
     conn.on('error', () => {
       if (session !== this.session) return;
-      this.dropConnection(conn, 'La connexion avec l’autre téléphone a été perdue.');
+      this.dropConnection(conn, 'La connexion avec un téléphone a été perdue.');
     });
   }
 
   private dropConnection(conn: DataConnection, reason: string): void {
-    if (this.conn !== conn) return;
-    this.conn = null;
+    if (this.conns.get(conn.peer) !== conn) return;
+    this.conns.delete(conn.peer);
     conn.close();
     if (this.role === 'host' && this.peer && !this.peer.destroyed) {
       // The host keeps its room open so the guest can come back with the same code.
-      this.cb.onStatus('En attente du Téléphone 2…', 'info');
+      if (!this.locked) this.cb.onStatus(this.waitingText, 'info');
     } else {
       this.cleanup();
     }
-    this.cb.onDisconnected(reason);
+    this.cb.onDisconnected(reason, conn.peer);
   }
 
-  public send(msg: P2PMessage): void {
-    if (this.conn?.open) void this.conn.send(msg);
+  /** Host: to one guest (`to`) or to all of them. Guest: to the host. */
+  public send(msg: P2PMessage, to?: string): void {
+    if (to) {
+      const c = this.conns.get(to);
+      if (c?.open) void c.send(msg);
+      return;
+    }
+    for (const c of this.conns.values()) if (c.open) void c.send(msg);
   }
 }

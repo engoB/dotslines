@@ -3,6 +3,8 @@
 
 /** True for the single-file build (standalone-bundle.html): no service worker. */
 declare const __STANDALONE__: boolean;
+/** package.json version, injected at build time. */
+declare const __APP_VERSION__: string;
 
 interface ImportMetaEnv {
   /** Optional self-hosted PeerJS signalling server. */

@@ -1,5 +1,5 @@
 /// <reference types="vitest/config" />
-import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { defineConfig, type Plugin } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
@@ -25,6 +25,8 @@ const publishStandalone = (outDir: string): Plugin => ({
   }
 });
 
+const { version } = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf8')) as { version: string };
+
 export default defineConfig(({ mode }) => {
   const standalone = mode === 'standalone';
   const standaloneOut = 'node_modules/.cache/standalone';
@@ -32,7 +34,7 @@ export default defineConfig(({ mode }) => {
   return {
     // Relative base: works on https://engob.github.io/dotslines/ and on any other host.
     base: './',
-    define: { __STANDALONE__: JSON.stringify(standalone) },
+    define: { __STANDALONE__: JSON.stringify(standalone), __APP_VERSION__: JSON.stringify(version) },
     build: standalone
       ? { outDir: standaloneOut, emptyOutDir: true, copyPublicDir: false }
       : { outDir: 'dist', emptyOutDir: true },
@@ -52,8 +54,8 @@ export default defineConfig(({ mode }) => {
               lang: 'fr',
               start_url: './',
               scope: './',
-              theme_color: '#f9f6f0',
-              background_color: '#f9f6f0',
+              theme_color: '#f6f2e9',
+              background_color: '#f6f2e9',
               display: 'standalone',
               orientation: 'portrait',
               categories: ['games'],
