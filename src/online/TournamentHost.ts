@@ -53,6 +53,9 @@ export class TournamentHost {
   private timers: ReturnType<typeof setTimeout>[] = [];
   private disposed = false;
 
+  /** Seconds per move for every human seat (0 = no timer). */
+  timer = 0;
+
   constructor(
     hostName: string,
     public size: number,
@@ -145,6 +148,12 @@ export class TournamentHost {
       const j = Math.floor(Math.random() * (i + 1));
       [this.seats[i], this.seats[j]] = [this.seats[j], this.seats[i]];
     }
+    this.broadcastLobby();
+  }
+
+  setTimer(seconds: number): void {
+    if (this.started) return;
+    this.timer = seconds;
     this.broadcastLobby();
   }
 
@@ -295,8 +304,8 @@ export class TournamentHost {
 
   private message(you: number): P2PMessage {
     return this.started
-      ? { type: 'T_SYNC', size: this.size, you, seats: this.seatInfo(), matches: this.matchInfo() }
-      : { type: 'LOBBY', size: this.size, you, seats: this.seatInfo() };
+      ? { type: 'T_SYNC', size: this.size, you, seats: this.seatInfo(), matches: this.matchInfo(), timer: this.timer }
+      : { type: 'LOBBY', size: this.size, you, seats: this.seatInfo(), timer: this.timer };
   }
 
   broadcastLobby(): void {

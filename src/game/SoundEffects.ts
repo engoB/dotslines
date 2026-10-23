@@ -1,4 +1,4 @@
-/** Pencil and chime sounds synthesised with the Web Audio API (no audio files). */
+/** Short, bright synthesised sounds (Web Audio API, no audio files). */
 export class SoundEffects {
   private ctx: AudioContext | null = null;
   public enabled = true;
@@ -20,73 +20,53 @@ export class SoundEffects {
     return this.ctx;
   }
 
-  public playPencilStroke(): void {
+  /** One enveloped oscillator note. */
+  private note(freq: number, start: number, duration: number, volume: number, type: OscillatorType = 'triangle', slideTo?: number): void {
+    const ctx = this.ctx!;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, start);
+    if (slideTo) osc.frequency.exponentialRampToValueAtTime(slideTo, start + duration);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(volume, start + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(start);
+    osc.stop(start + duration + 0.02);
+  }
+
+  private play(fn: (now: number) => void): void {
     if (!this.enabled) return;
     const ctx = this.init();
-    if (!ctx) return;
+    if (ctx) fn(ctx.currentTime);
+  }
 
-    const duration = 0.13;
-    const bufferSize = Math.floor(ctx.sampleRate * duration);
-    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < bufferSize; i++) {
-      data[i] = (Math.random() * 2 - 1) * Math.sin((i / bufferSize) * Math.PI);
-    }
-
-    const noise = ctx.createBufferSource();
-    noise.buffer = buffer;
-
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'bandpass';
-    filter.frequency.setValueAtTime(1300 + Math.random() * 300, ctx.currentTime);
-    filter.Q.setValueAtTime(2.5, ctx.currentTime);
-
-    const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0.18, ctx.currentTime);
-
-    noise.connect(filter);
-    filter.connect(gain);
-    gain.connect(ctx.destination);
-    noise.start();
+  /** A line is drawn: quick rising "pop". */
+  public playStroke(): void {
+    this.play((t) => this.note(520, t, 0.09, 0.16, 'sine', 820));
   }
 
   public playBoxCaptured(count = 1): void {
-    if (!this.enabled) return;
-    const ctx = this.init();
-    if (!ctx) return;
-
-    const notes = count > 1 ? [523.25, 659.25, 783.99] : [440, 587.33];
-    notes.forEach((freq, idx) => {
-      const start = ctx.currentTime + idx * 0.07;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(freq, start);
-      gain.gain.setValueAtTime(0.15, start);
-      gain.gain.exponentialRampToValueAtTime(0.001, start + 0.28);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(start);
-      osc.stop(start + 0.29);
-    });
+    const notes = count > 1 ? [784, 988, 1175, 1568] : [784, 1175];
+    this.play((t) => notes.forEach((f, i) => this.note(f, t + i * 0.06, 0.22, 0.13)));
   }
 
   public playVictory(): void {
-    if (!this.enabled) return;
-    const ctx = this.init();
-    if (!ctx) return;
-    [523.25, 659.25, 783.99, 1046.5].forEach((freq, idx) => {
-      const start = ctx.currentTime + idx * 0.11;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(freq, start);
-      gain.gain.setValueAtTime(0.13, start);
-      gain.gain.exponentialRampToValueAtTime(0.001, start + 0.45);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(start);
-      osc.stop(start + 0.46);
+    this.play((t) => [523, 659, 784, 1047, 1319].forEach((f, i) => this.note(f, t + i * 0.1, 0.4, 0.12)));
+  }
+
+  /** Last seconds of the turn timer. */
+  public playTick(urgent = false): void {
+    this.play((t) => this.note(urgent ? 1320 : 990, t, 0.06, 0.1, 'square'));
+  }
+
+  /** Time is up. */
+  public playTimeout(): void {
+    this.play((t) => {
+      this.note(330, t, 0.16, 0.12, 'sawtooth', 220);
+      this.note(262, t + 0.14, 0.22, 0.12, 'sawtooth', 160);
     });
   }
 }

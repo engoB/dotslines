@@ -1,11 +1,11 @@
 import { BoardState, edgeInfo, type Player } from './board';
 import { AIClient } from './AIClient';
 import type { AILevel } from './ai';
-import { SketchRenderer } from './SketchRenderer';
+import { BOARD_FONT, BoardRenderer } from './BoardRenderer';
 import { SoundEffects } from './SoundEffects';
 import type { ConfettiParticle, MatchConfig } from './types';
 
-export type MoveSource = 'local' | 'ai' | 'remote';
+export type MoveSource = 'local' | 'ai' | 'remote' | 'timeout';
 
 export interface GameHooks {
   /** Scores / current player changed. */
@@ -13,6 +13,8 @@ export interface GameHooks {
   /** `captured` = number of boxes the move closed (the same player plays again). */
   onMove: (edge: number, source: MoveSource, seq: number, captured: number) => void;
   onGameOver: () => void;
+  /** Turn timer: remaining / total ms for `player` (total 0 = no timer running). */
+  onTimer?: (remainingMs: number, totalMs: number, player: Player) => void;
 }
 
 /** Minimum time the AI "thinks", so its line is readable (shorter while it chains captures). */
@@ -20,10 +22,13 @@ const AI_MIN_DELAY_MS = 420;
 const AI_CHAIN_DELAY_MS = 230;
 /** Computer-vs-computer matches are watched at a brisker pace. */
 const AI_VS_AI_DELAY_MS = 170;
-const EDGE_ANIM_MS = 140;
-const BOX_ANIM_MS = 420;
+const EDGE_ANIM_MS = 170;
+const BOX_ANIM_MS = 380;
+/** How long the opponent's last move pulses before staying highlighted. */
+const PULSE_MS = 2600;
+const TIMER_TICK_MS = 100;
 
-export const PLAYER_COLORS: Record<Player, string> = { 1: '#2f6fdb', 2: '#e2574c' };
+export const PLAYER_COLORS: Record<Player, string> = { 1: '#1d9bf0', 2: '#ff4b55' };
 
 export class DotsAndBoxesGame {
   private readonly canvas: HTMLCanvasElement;
@@ -39,11 +44,18 @@ export class DotsAndBoxesGame {
 
   private edgeAnim = new Float32Array(0);
   private boxAnim = new Float32Array(0);
-  private lastEdge = -1;
   private lastSource: MoveSource | null = null;
+  /** Lines of the latest turn (one player's consecutive moves) and who played them. */
+  private turnEdges: number[] = [];
+  private turnOwner: Player | 0 = 0;
+  private turnTime = 0;
   private hoverEdge = -1;
   private pointerDown = false;
   private confetti: ConfettiParticle[] = [];
+
+  private deadline = 0;
+  private pausedRemaining = -1;
+  private timerHandle: number | undefined;
 
   private cssWidth = 300;
   private cssHeight = 300;
@@ -60,8 +72,8 @@ export class DotsAndBoxesGame {
     const parent = canvas.parentElement!;
     new ResizeObserver(() => this.resize()).observe(parent);
     this.resize();
-    // Captured-box initials use the Caveat font: redraw once it is ready.
-    document.fonts?.load("700 32px 'Caveat'").then(() => this.requestRender(), () => {});
+    // Captured-box initials use the rounded display font: redraw once it is ready.
+    document.fonts?.load(`800 32px ${BOARD_FONT}`).then(() => this.requestRender(), () => {});
   }
 
   // ---- match flow ---------------------------------------------------------
@@ -92,23 +104,30 @@ export class DotsAndBoxesGame {
     this.boxAnim = new Float32Array(this.state.geom.boxCount);
     this.aiThinking = false;
     this.hoverEdge = -1;
-    this.lastEdge = -1;
+    this.pointerDown = false;
     this.lastSource = null;
+    this.turnEdges = [];
+    this.turnOwner = 0;
     this.confetti = [];
+    this.pausedRemaining = -1;
 
     // Replay (P2P resync): apply silently, fully drawn.
     for (const e of moves) {
       if (!this.state.isFree(e) || this.state.isOver) break;
+      this.trackTurn(e, this.state.currentPlayer);
       this.state.play(e);
-      this.lastEdge = e;
     }
+    this.turnTime = 0; // no pulse for replayed history
     this.edgeAnim.fill(1);
     this.boxAnim.fill(1);
 
     this.hooks.onUpdate();
     this.requestRender();
     if (this.state.isOver) this.finish();
-    else this.maybeRunAI();
+    else {
+      this.armTimer();
+      this.maybeRunAI();
+    }
   }
 
   public canLocalPlayerAct(): boolean {
@@ -129,16 +148,27 @@ export class DotsAndBoxesGame {
     return true;
   }
 
+  private trackTurn(edge: number, player: Player): void {
+    if (player !== this.turnOwner) {
+      this.turnOwner = player;
+      this.turnEdges = [];
+    }
+    this.turnEdges.push(edge);
+    this.turnTime = performance.now();
+  }
+
   private playEdge(edge: number, source: MoveSource): void {
     const seq = this.state.moves.length;
+    this.trackTurn(edge, this.state.currentPlayer);
     const captured = this.state.play(edge);
     this.edgeAnim[edge] = 0.001;
     for (const b of captured) this.boxAnim[b] = 0.001;
-    this.lastEdge = edge;
     this.lastSource = source;
     this.hoverEdge = -1;
+    this.pointerDown = false;
 
-    this.sfx.playPencilStroke();
+    this.sfx.playStroke();
+    if (source === 'timeout') this.sfx.playTimeout();
     if (captured.length > 0) this.sfx.playBoxCaptured(captured.length);
 
     this.hooks.onMove(edge, source, seq, captured.length);
@@ -146,7 +176,10 @@ export class DotsAndBoxesGame {
     this.requestRender();
 
     if (this.state.isOver) this.finish();
-    else this.maybeRunAI();
+    else {
+      this.armTimer();
+      this.maybeRunAI();
+    }
   }
 
   private maybeRunAI(): void {
@@ -172,12 +205,65 @@ export class DotsAndBoxesGame {
 
   private finish(): void {
     this.aiThinking = false;
-    this.spawnPaperConfetti();
+    this.stopTimer();
+    this.spawnConfetti();
     this.requestRender();
     const id = this.matchId;
     window.setTimeout(() => {
       if (id === this.matchId) this.hooks.onGameOver();
     }, 750);
+  }
+
+  // ---- turn timer ---------------------------------------------------------
+
+  /** Whose turns are timed: humans only (here or on another phone). */
+  private isTimed(p: Player): boolean {
+    const { turnSeconds, ai, untimed } = this.config;
+    return !!turnSeconds && !ai?.[p] && !untimed?.includes(p);
+  }
+
+  /** Restarts the clock for the player to move (each line is a new decision). */
+  private armTimer(): void {
+    this.stopTimer();
+    const p = this.state.currentPlayer;
+    if (this.state.isOver || !this.isTimed(p)) {
+      this.hooks.onTimer?.(0, 0, p);
+      return;
+    }
+    const total = this.config.turnSeconds! * 1000;
+    if (this.pausedRemaining >= 0) this.pausedRemaining = total;
+    else this.deadline = performance.now() + total;
+    const id = this.matchId;
+    this.timerHandle = window.setInterval(() => this.tick(id, p, total), TIMER_TICK_MS);
+    this.tick(id, p, total);
+  }
+
+  private tick(id: number, p: Player, total: number): void {
+    if (id !== this.matchId || this.state.isOver || this.state.currentPlayer !== p) return this.stopTimer();
+    const remaining = this.pausedRemaining >= 0 ? this.pausedRemaining : Math.max(0, this.deadline - performance.now());
+    this.hooks.onTimer?.(remaining, total, p);
+    if (remaining > 0 || this.pausedRemaining >= 0) return;
+    this.stopTimer();
+    // Out of time: a random line is drawn for the player (only by the phone that holds them).
+    if (!this.canLocalPlayerAct()) return;
+    const free: number[] = [];
+    for (let e = 0; e < this.state.geom.edgeCount; e++) if (this.state.isFree(e)) free.push(e);
+    if (free.length) this.playEdge(free[Math.floor(Math.random() * free.length)], 'timeout');
+  }
+
+  private stopTimer(): void {
+    window.clearInterval(this.timerHandle);
+    this.timerHandle = undefined;
+  }
+
+  /** Freezes / resumes the clock (local games: pause menu, app in background). */
+  public setPaused(paused: boolean): void {
+    if (paused && this.pausedRemaining < 0) {
+      this.pausedRemaining = Math.max(0, this.deadline - performance.now());
+    } else if (!paused && this.pausedRemaining >= 0) {
+      this.deadline = performance.now() + this.pausedRemaining;
+      this.pausedRemaining = -1;
+    }
   }
 
   // ---- layout & input -----------------------------------------------------
@@ -194,15 +280,14 @@ export class DotsAndBoxesGame {
     this.requestRender();
   }
 
-  private metrics(): { originX: number; originY: number; cell: number; scale: number } {
+  private metrics(): { originX: number; originY: number; cell: number } {
     const side = Math.min(this.cssWidth, this.cssHeight);
-    const padding = side * 0.11;
+    const padding = side * 0.08;
     const cell = (side - padding * 2) / this.state.size;
     return {
       originX: (this.cssWidth - side) / 2 + padding,
       originY: (this.cssHeight - side) / 2 + padding,
-      cell,
-      scale: Math.max(0.7, Math.min(1.3, cell / 80))
+      cell
     };
   }
 
@@ -290,13 +375,18 @@ export class DotsAndBoxesGame {
     this.rafId = 0;
     const dt = this.lastFrame ? Math.min(50, time - this.lastFrame) : 16;
     this.lastFrame = time;
-    const animating = this.advance(dt);
-    this.render();
+    const animating = this.advance(dt, time);
+    this.render(time);
     if (animating) this.requestRender();
     else this.lastFrame = 0;
   }
 
-  private advance(dt: number): boolean {
+  /** The opponent's last turn pulses for a moment after it was played. */
+  private highlightActive(): boolean {
+    return this.turnEdges.length > 0 && !this.state.isOver && this.turnOwner !== this.state.currentPlayer;
+  }
+
+  private advance(dt: number, now: number): boolean {
     let animating = false;
     for (let i = 0; i < this.edgeAnim.length; i++) {
       if (this.edgeAnim[i] > 0 && this.edgeAnim[i] < 1) {
@@ -310,6 +400,7 @@ export class DotsAndBoxesGame {
         animating = true;
       }
     }
+    if (this.highlightActive() && now - this.turnTime < PULSE_MS) animating = true;
     if (this.confetti.length > 0) {
       const k = dt / 16.67;
       for (const p of this.confetti) {
@@ -324,57 +415,52 @@ export class DotsAndBoxesGame {
     return animating;
   }
 
-  private render(): void {
+  private render(now: number): void {
     const ctx = this.ctx;
     const { geom, edgeOwner, boxOwner } = this.state;
     ctx.clearRect(0, 0, this.cssWidth, this.cssHeight);
-    const { originX, originY, cell, scale } = this.metrics();
+    const { originX, originY, cell } = this.metrics();
     const labels = this.labels;
+    const lineWidth = Math.max(5, cell * 0.095);
 
     for (let b = 0; b < geom.boxCount; b++) {
+      const x = originX + (b % geom.size) * cell;
+      const y = originY + Math.floor(b / geom.size) * cell;
       const owner = boxOwner[b] as Player | 0;
-      if (!owner) continue;
-      const r = Math.floor(b / geom.size);
-      const c = b % geom.size;
-      SketchRenderer.drawCapturedBox(
-        ctx,
-        originX + c * cell,
-        originY + r * cell,
-        cell,
-        PLAYER_COLORS[owner],
-        labels[owner],
-        this.boxAnim[b],
-        1000 + geom.size * 97 + b * 13
-      );
+      if (owner && this.boxAnim[b] >= 1) {
+        BoardRenderer.box(ctx, x, y, cell, PLAYER_COLORS[owner], labels[owner], 1);
+        continue;
+      }
+      BoardRenderer.cell(ctx, x, y, cell);
+      if (owner) BoardRenderer.box(ctx, x, y, cell, PLAYER_COLORS[owner], labels[owner], this.boxAnim[b]);
     }
 
-    if (this.lastEdge >= 0 && edgeOwner[this.lastEdge] && !this.state.isOver) {
-      const { x1, y1, x2, y2 } = this.edgeCoords(this.lastEdge);
-      SketchRenderer.drawHighlight(ctx, x1, y1, x2, y2, PLAYER_COLORS[edgeOwner[this.lastEdge] as Player], 14 * scale);
+    // The opponent's last turn: pulsing glow, then a steady one until you play.
+    if (this.highlightActive()) {
+      const age = now - this.turnTime;
+      const alpha = age < PULSE_MS ? 0.22 + 0.2 * (0.5 + 0.5 * Math.sin((age / 1000) * Math.PI * 2.4)) : 0.24;
+      for (const e of this.turnEdges) {
+        const { x1, y1, x2, y2 } = this.edgeCoords(e);
+        BoardRenderer.halo(ctx, x1, y1, x2, y2, PLAYER_COLORS[this.turnOwner as Player], lineWidth * 3.1, alpha);
+      }
     }
 
     if (this.hoverEdge >= 0 && this.state.isFree(this.hoverEdge) && this.canLocalPlayerAct()) {
       const { x1, y1, x2, y2 } = this.edgeCoords(this.hoverEdge);
-      SketchRenderer.drawPencilLine(
-        ctx, x1, y1, x2, y2, PLAYER_COLORS[this.state.currentPlayer], 1, this.edgeSeed(this.hoverEdge), true, scale
-      );
+      BoardRenderer.ghost(ctx, x1, y1, x2, y2, PLAYER_COLORS[this.state.currentPlayer], lineWidth);
     }
 
     for (let e = 0; e < geom.edgeCount; e++) {
       const owner = edgeOwner[e] as Player | 0;
       if (!owner) continue;
       const { x1, y1, x2, y2 } = this.edgeCoords(e);
-      SketchRenderer.drawPencilLine(
-        ctx, x1, y1, x2, y2, PLAYER_COLORS[owner], this.edgeAnim[e], this.edgeSeed(e), false, scale
-      );
+      BoardRenderer.line(ctx, x1, y1, x2, y2, PLAYER_COLORS[owner], lineWidth, this.edgeAnim[e]);
     }
 
     const dots = geom.size + 1;
-    const dotRadius = Math.max(4, cell * 0.065);
+    const dotRadius = Math.max(4.5, cell * 0.078);
     for (let r = 0; r < dots; r++) {
-      for (let c = 0; c < dots; c++) {
-        SketchRenderer.drawSketchDot(ctx, originX + c * cell, originY + r * cell, dotRadius, r * 17 + c * 31);
-      }
+      for (let c = 0; c < dots; c++) BoardRenderer.dot(ctx, originX + c * cell, originY + r * cell, dotRadius);
     }
 
     for (const p of this.confetti) {
@@ -382,28 +468,26 @@ export class DotsAndBoxesGame {
       ctx.translate(p.x, p.y);
       ctx.rotate(p.rot);
       ctx.fillStyle = p.color;
-      ctx.fillRect(-p.size / 2, -p.size / 3, p.size, p.size * 0.66);
+      ctx.beginPath();
+      ctx.arc(0, 0, p.size / 2, 0, Math.PI * 2);
+      ctx.fill();
       ctx.restore();
     }
   }
 
-  private edgeSeed(e: number): number {
-    return 10 + this.state.size * 211 + e * 7;
-  }
-
-  private spawnPaperConfetti(): void {
+  private spawnConfetti(): void {
     if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
-    const palette = ['#2f6fdb', '#e2574c', '#14a38b', '#ffc93c', '#1f2a44'];
-    for (let i = 0; i < 60; i++) {
+    const palette = [PLAYER_COLORS[1], PLAYER_COLORS[2], '#ffc531', '#2ecc71', '#a26bff'];
+    for (let i = 0; i < 70; i++) {
       this.confetti.push({
         x: this.cssWidth / 2,
         y: this.cssHeight / 2,
-        vx: (Math.random() - 0.5) * 10,
-        vy: (Math.random() - 0.85) * 10,
-        size: 6 + Math.random() * 6,
+        vx: (Math.random() - 0.5) * 11,
+        vy: (Math.random() - 0.85) * 11,
+        size: 6 + Math.random() * 7,
         color: palette[i % palette.length],
-        rot: Math.random() * Math.PI,
-        vRot: (Math.random() - 0.5) * 0.2
+        rot: 0,
+        vRot: 0
       });
     }
   }

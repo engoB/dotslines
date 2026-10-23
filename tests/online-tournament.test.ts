@@ -124,6 +124,18 @@ describe('online tournament', () => {
     expect(lobby.host.seats[1].kind).toBe('open');
   });
 
+  it('shares the move timer chosen by the host with every phone', () => {
+    const { host, clients, join } = setup();
+    join('bob');
+    host.setTimer(10);
+    expect(clients.bob.timer).toBe(10);
+    expect(clients.host.timer).toBe(10);
+    host.fillWithAI();
+    host.start();
+    host.setTimer(5); // locked once the tournament has started
+    expect(clients.bob.timer).toBe(10);
+  });
+
   it('goes back to the lobby for another tournament', () => {
     const { host, clients, join } = setup();
     join('bob');

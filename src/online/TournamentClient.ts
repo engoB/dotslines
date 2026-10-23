@@ -13,6 +13,8 @@ export interface ClientMatch extends MatchInfo {
 export class TournamentClient {
   size = 4;
   you = 0;
+  /** Seconds per move chosen by the host (0 = no timer). */
+  timer = 0;
   seats: SeatInfo[] = [];
   matches: ClientMatch[] = [];
 
@@ -59,6 +61,7 @@ export class TournamentClient {
     this.size = msg.size;
     this.you = msg.you;
     this.seats = msg.seats;
+    this.timer = msg.timer;
     this.matches = [];
   }
 
@@ -68,6 +71,7 @@ export class TournamentClient {
    */
   applySync(msg: Extract<P2PMessage, { type: 'T_SYNC' }>): number[] {
     const before = this.matches;
+    this.timer = msg.timer;
     this.size = msg.size;
     this.you = msg.you;
     this.seats = msg.seats;

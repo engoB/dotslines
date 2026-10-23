@@ -12,7 +12,11 @@ export interface Prefs {
   starter: StarterPref;
   /** Name shown to the other phones in online games. */
   playerName: string;
+  /** Seconds per move, for every mode (0 = no timer). */
+  turnTimer: number;
 }
+
+export const TIMER_CHOICES = [0, 5, 10, 20];
 
 export interface Record3 {
   w: number;
@@ -35,7 +39,8 @@ const DEFAULT_PREFS: Prefs = {
   size: 4,
   sound: true,
   starter: 'alternate',
-  playerName: ''
+  playerName: '',
+  turnTimer: 0
 };
 
 function read<T>(key: string): Partial<T> {
@@ -68,7 +73,8 @@ export function loadPrefs(): Prefs {
     size: oneOf(raw.size, SIZES, DEFAULT_PREFS.size),
     sound: bool(raw.sound, DEFAULT_PREFS.sound),
     starter: oneOf(raw.starter, ['alternate', 'random', 'me', 'opponent'] as const, DEFAULT_PREFS.starter),
-    playerName: typeof raw.playerName === 'string' ? raw.playerName.slice(0, 14) : ''
+    playerName: typeof raw.playerName === 'string' ? raw.playerName.slice(0, 14) : '',
+    turnTimer: oneOf(raw.turnTimer, TIMER_CHOICES, DEFAULT_PREFS.turnTimer)
   };
 }
 
